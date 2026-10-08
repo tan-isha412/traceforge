@@ -79,18 +79,15 @@ export default function App() {
         </section>
         <section className="pane detail">
           {tab === "devices" && deviceId && <DevicePanel deviceId={deviceId} />}
-<<<<<<< Updated upstream
-          {tab === "incidents" && incidentId && <IncidentPanel incidentId={incidentId} onOpenDevice={openDevice} onSelectIncident={setIncidentId} />}
-=======
           {tab === "incidents" && incidentId && <IncidentPanel
               incidentId={incidentId}
               onOpenDevice={openDevice}
+              onSelectIncident={setIncidentId}
               onChanged={() => {
                 incidents.refresh();
                 stats.refresh();
               }}
             />}
->>>>>>> Stashed changes
           {((tab === "devices" && !deviceId) || (tab === "incidents" && !incidentId)) && (
             <div className="empty">Select {tab === "devices" ? "a device" : "an incident"} to investigate.</div>
           )}

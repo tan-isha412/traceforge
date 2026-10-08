@@ -131,11 +131,11 @@ def test_api_timestamps_are_explicit_utc(client):
 def test_hour_feature_uses_local_timezone():
     from datetime import datetime, timezone
 
-    from server.detection.features import features_from_history
+    from server.detection.features import FEATURE_NAMES, features_from_history
 
     # 22:30 UTC is 04:00 the next day in the default zone (Asia/Kolkata, UTC+5:30).
     features = features_from_history([], (datetime(2026, 9, 1, 22, 30, tzinfo=timezone.utc), 1))
-    assert features[1] == 4.0
+    assert features[FEATURE_NAMES.index("hour_of_day")] == 4.0
 
 
 def test_model_trained_under_another_timezone_is_ignored(client, monkeypatch):
@@ -153,13 +153,14 @@ def test_model_trained_under_another_timezone_is_ignored(client, monkeypatch):
 SPOOF = dict(dtype="USB Input Device", descriptor=HID)
 
 
-def test_device_hopping_to_another_machine_joins_the_same_incident(client):
+def test_device_hopping_to_another_machine_joins_the_same_case(client):
     post(client)
     first = post(client, ts="2026-09-02T03:00:00Z", **SPOOF)
     hop = post(client, machine="PC-2", ts="2026-09-02T03:08:00Z", **SPOOF)
-    assert hop["incident_id"] == first["incident_id"]
-    detail = client.get(f"/incidents/{first['incident_id']}").json()
-    assert detail["machines"] == ["PC-1", "PC-2"]
+    assert hop["incident_id"] not in (None, first["incident_id"])
+    detail = client.get(f"/incidents/{hop['incident_id']}").json()
+    assert detail["case_id"] == first["incident_id"]
+    assert detail["case_machines"] == ["PC-1", "PC-2"]
 
 
 def test_second_suspicious_device_on_same_machine_joins_but_benign_one_does_not(client):

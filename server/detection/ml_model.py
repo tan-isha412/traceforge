@@ -7,13 +7,13 @@ import numpy as np
 from sklearn.ensemble import IsolationForest
 from sqlalchemy.orm import Session
 
+from server.config import settings
 from server.detection.features import (
     FEATURE_LABELS,
     FEATURE_NAMES,
     build_training_matrix,
     extract_event_features,
 )
-from server.config import settings
 from server.detection.rules import Finding
 from server.models import Event
 
@@ -31,7 +31,13 @@ _bundle: dict | None = None
 def _load() -> dict | None:
     global _bundle
     if _bundle is None and MODEL_PATH.exists():
-        _bundle = joblib.load(MODEL_PATH)
+        loaded = joblib.load(MODEL_PATH)
+        # A model saved with a different feature set cannot score current vectors; retrain instead.
+        if loaded.get("features") == FEATURE_NAMES:
+            _bundle = loaded
+    # A model trained under another timezone learned a different meaning of "night".
+    if _bundle is not None and _bundle.get("timezone") != settings.timezone:
+        return None
     return _bundle
 
 
@@ -49,6 +55,7 @@ def fit_bundle(X: np.ndarray) -> dict:
     model = IsolationForest(n_estimators=200, contamination="auto", random_state=42).fit(X)
     return {
         "model": model,
+        "timezone": settings.timezone,
         "threshold": float(np.percentile(model.decision_function(X), THRESHOLD_PERCENTILE)),
         "training_rows": len(X),
         "features": FEATURE_NAMES,
@@ -67,15 +74,7 @@ def train(db: Session) -> dict:
     rows = build_training_matrix(db)
     if len(rows) < MIN_TRAINING_ROWS:
         raise ValueError(f"Need at least {MIN_TRAINING_ROWS} historical connect events to train, have {len(rows)}.")
-    X = np.array(rows)
-    model = IsolationForest(n_estimators=200, contamination="auto", random_state=42).fit(X)
-    _bundle = {
-        "model": model,
-        "threshold": float(np.percentile(model.decision_function(X), THRESHOLD_PERCENTILE)),
-        "training_rows": len(rows),
-        "median": np.median(X, axis=0),
-        "std": X.std(axis=0) + 1e-9,
-    }
+    _bundle = fit_bundle(np.array(rows))
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(_bundle, MODEL_PATH)
     return status()

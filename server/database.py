@@ -19,7 +19,7 @@ def get_db():
 # Columns added after the first release. create_all() never alters an existing table,
 # so databases created by an older version get them added here.
 ADDED_COLUMNS = {
-    "incidents": {"case_id": "INTEGER REFERENCES incidents(id)", "case_reason": "VARCHAR"},
+    "incidents": {"case_id": "INTEGER REFERENCES incidents(id)", "case_reason": "VARCHAR", "note": "VARCHAR"},
 }
 
 

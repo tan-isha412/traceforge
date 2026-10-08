@@ -106,14 +106,9 @@ def ev(machine, dev, kind, ts, serial="keep", dtype="keep", descriptor="keep", v
         serial_number=s if serial == "keep" else serial,
         device_type=t if dtype == "keep" else dtype,
         event_type=kind,
-<<<<<<< Updated upstream
-        timestamp=ts,
+        timestamp=ts.astimezone(timezone.utc),
         descriptor=d,
         enumeration=enumeration_for(d, rng, enum_ms, enum_order) if kind == "connect" else None,
-=======
-        timestamp=ts.astimezone(timezone.utc),
-        descriptor=d if descriptor == "keep" else descriptor,
->>>>>>> Stashed changes
     )
 
 
@@ -142,7 +137,7 @@ def attack_events(today: datetime) -> list[tuple[str, list[EventIngest]]]:
     burst = [ev("LAB-PC-01", "mouse", "connect", at(22, 40, 0) + timedelta(seconds=20 * i)) for i in range(9)]
     return [
         (
-            "A. Type-switching device (BadUSB): a Kingston flash drive re-appears as a keyboard at 03:12 (local) on a new machine, then hops to a second machine 8 minutes later (one cross-machine incident)",
+            "A. Type-switching device (BadUSB): a Kingston flash drive re-appears as a keyboard at 03:12 (local) on a new machine, then hops to a second machine 8 minutes later (one cross-machine case)",
             [
                 ev("LAB-PC-02", "kingston", "connect", at(3, 12), dtype=INPUT, descriptor=HID),
                 ev("LAB-PC-02", "kingston", "disconnect", at(3, 12, 40), dtype=INPUT, descriptor=HID),

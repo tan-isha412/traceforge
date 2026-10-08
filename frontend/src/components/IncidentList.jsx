@@ -38,7 +38,6 @@ export function IncidentTable({ incidents, selectedId, onSelect }) {
   );
 }
 
-<<<<<<< Updated upstream
 function CaseSection({ incident, onSelectIncident }) {
   if (!incident.related.length) return null;
   return (
@@ -61,7 +60,10 @@ function CaseSection({ incident, onSelectIncident }) {
           </button>
         ))}
       </div>
-=======
+    </div>
+  );
+}
+
 function Workflow({ incident, onChanged }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -104,18 +106,12 @@ function Workflow({ incident, onChanged }) {
         </button>
         {error && <span className="error small">{error}</span>}
       </div>
->>>>>>> Stashed changes
     </div>
   );
 }
 
-<<<<<<< Updated upstream
-export function IncidentPanel({ incidentId, onOpenDevice, onSelectIncident }) {
-  const { data } = usePolling(() => api.incident(incidentId), incidentId);
-=======
-export function IncidentPanel({ incidentId, onOpenDevice, onChanged }) {
+export function IncidentPanel({ incidentId, onOpenDevice, onSelectIncident, onChanged }) {
   const { data, refresh } = usePolling(() => api.incident(incidentId), incidentId);
->>>>>>> Stashed changes
   if (!data) return <div className="empty">Loading incident…</div>;
   return (
     <div>
@@ -134,9 +130,7 @@ export function IncidentPanel({ incidentId, onOpenDevice, onChanged }) {
           Open device profile →
         </button>
       </div>
-<<<<<<< Updated upstream
       <CaseSection incident={data} onSelectIncident={onSelectIncident} />
-=======
       <Workflow
         key={data.id}
         incident={data}
@@ -145,7 +139,6 @@ export function IncidentPanel({ incidentId, onOpenDevice, onChanged }) {
           onChanged();
         }}
       />
->>>>>>> Stashed changes
       <div className="card-section">
         <h3>Correlated events</h3>
         <Timeline entries={data.timeline} />

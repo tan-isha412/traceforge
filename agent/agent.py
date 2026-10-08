@@ -1,111 +1,85 @@
-"""TraceForge live agent (Windows).
+"""TraceForge live agent (Windows, Linux; macOS via libusb polling).
 
-Polls Win32_PnPEntity for USB devices, diffs against the previous snapshot to
-detect connect/disconnect events, and POSTs each event to the TraceForge
-server. Requires: pip install wmi pywin32 requests
+Listens for USB connect/disconnect events from the OS, waits briefly while the
+device enumerates (to record which interfaces appeared, in what order and how
+fast), reads the real descriptor tree with libusb, and sends each event to the
+TraceForge server. Events the server cannot take right now are spooled to disk
+and retried.
+
+    python agent/agent.py
+
+Environment: TRACEFORGE_SERVER (default http://localhost:8000),
+TRACEFORGE_API_KEY (must match the server's API_KEY when one is set),
+TRACEFORGE_SPOOL (default ~/.traceforge/spool.jsonl).
 """
 
-import json
 import os
 import queue
 import socket
 import sys
 import time
+from pathlib import Path
 
-import requests
-import wmi
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # allow `python agent/agent.py`
+
+from agent import backends  # noqa: E402
+from agent.core import EnumerationTracker, RawEvent, Sender, build_payload  # noqa: E402
+from agent.descriptors import device_type_for, read_descriptor  # noqa: E402
 
 SERVER_URL = os.environ.get("TRACEFORGE_SERVER", "http://localhost:8000")
-POLL_INTERVAL_SECONDS = 2
-
-# Top-level device nodes only: USB\VID_xxxx&PID_xxxx\<instance>. Interface children
-# of composite devices look like ...&MI_00\... and are skipped.
-PNP_ID_RE = re.compile(r"USB\\VID_(?P<vendor_id>[0-9A-Fa-f]{4})&PID_(?P<product_id>[0-9A-Fa-f]{4})\\(?P<instance>[^\\]+)$")
-
+API_KEY = os.environ.get("TRACEFORGE_API_KEY") or None
+SPOOL = Path(os.environ.get("TRACEFORGE_SPOOL", Path.home() / ".traceforge" / "spool.jsonl"))
+RETRY_SECONDS = 10
 HOSTNAME = socket.gethostname()
 
 
-def interface_classes(compatible_ids) -> set[int]:
-    classes = set()
-    for compatible_id in compatible_ids or ():
-        match = CLASS_RE.match(compatible_id)
-        if match:
-            classes.add(int(match.group(1), 16))
-    return classes
-
-
-def parse_usb_device(pnp_device_id: str, entity) -> dict | None:
-    match = PNP_ID_RE.match(pnp_device_id)
-    if not match:
-        return None
-    instance = match.group("instance")
-    # Windows invents instance IDs containing '&' for devices without a real serial number.
-    serial = None if "&" in instance else instance
-    return {
-        "vendor_id": match.group("vendor_id").upper(),
-        "product_id": match.group("product_id").upper(),
-        "serial_number": serial,
-        "device_type": entity.Description,
-        "pnp_device_id": pnp_device_id,
-        "pnp_class": entity.PNPClass,
-        "service": entity.Service,
-    }
-
-
-def snapshot_usb_devices(conn: wmi.WMI) -> dict[str, dict]:
-    devices = {}
-    for entity in conn.Win32_PnPEntity():
-        pnp_device_id = entity.DeviceID or ""
-        if not pnp_device_id.startswith("USB\\"):
-            continue
-        parsed = parse_usb_device(pnp_device_id, entity)
-        if parsed is not None:
-            devices[pnp_device_id] = parsed
-    return devices
-
-
-def send_event(device: dict, event_type: str) -> None:
-    payload = {
-        "machine_hostname": HOSTNAME,
-        "vendor_id": device["vendor_id"],
-        "product_id": device["product_id"],
-        "serial_number": device["serial_number"],
-        "device_type": device["device_type"],
-        "event_type": event_type,
-        "descriptor": {
-            "pnp_device_id": device["pnp_device_id"],
-            "pnp_class": device["pnp_class"],
-            "service": device["service"],
-        },
-    }
-    try:
-        resp = requests.post(f"{SERVER_URL}/events/ingest", json=payload, timeout=5)
-        resp.raise_for_status()
-        result = resp.json()
-        flag = " [NEW DEVICE]" if result.get("is_new_device") else ""
-        print(f"{event_type.upper():>10} {device['vendor_id']}:{device['product_id']} ({device['device_type']}){flag}")
-    except requests.RequestException as exc:
-        print(f"failed to send {event_type} event for {device['pnp_device_id']}: {exc}")
+def report(results: list[dict], label: str) -> None:
+    for r in results:
+        flag = " [NEW DEVICE]" if r.get("is_new_device") else ""
+        inc = f" incident #{r['incident_id']}" if r.get("incident_id") else ""
+        print(f"{label} risk={r['risk_score']} ({r['risk_level']}){flag}{inc}")
 
 
 def run() -> None:
-    conn = wmi.WMI()
-    previous = snapshot_usb_devices(conn)
-    print(f"TraceForge agent running on {HOSTNAME}, watching {len(previous)} USB device(s). Ctrl+C to stop.")
+    events: queue.Queue[RawEvent] = queue.Queue()
+    mode, existing = backends.start(events)
+    attached = {e.key: e for e in existing}
+    tracker = EnumerationTracker()
+    sender = Sender(SERVER_URL, API_KEY, SPOOL)
+    print(f"TraceForge agent on {HOSTNAME} ({mode}), {len(attached)} USB device(s) attached, "
+          f"{len(sender.queue)} spooled event(s). Ctrl+C to stop.")
+    last_retry = time.monotonic()
 
     while True:
-        time.sleep(POLL_INTERVAL_SECONDS)
-        current = snapshot_usb_devices(conn)
+        try:
+            ev = events.get(timeout=0.25)
+        except queue.Empty:
+            ev = None
 
-        for pnp_id, device in current.items():
-            if pnp_id not in previous:
-                send_event(device, "connect")
+        if ev is not None:
+            if ev.kind == "interface":
+                tracker.interface_added(ev)
+            elif ev.action == "add":
+                tracker.device_added(ev)
+            elif ev.action == "remove":
+                known = attached.pop(ev.key, None)
+                if not tracker.device_removed(ev.key) and known is not None:
+                    known.wall = ev.wall
+                    report(sender.send(build_payload(HOSTNAME, known, "disconnect", None, None)), f"DISCONNECT {known.vendor_id}:{known.product_id}")
 
-        for pnp_id, device in previous.items():
-            if pnp_id not in current:
-                send_event(device, "disconnect")
+        for dev, enumeration in tracker.due(time.monotonic()):
+            descriptor = read_descriptor(dev.vendor_id, dev.product_id, dev.serial_number)
+            if dev.device_type is None and descriptor:
+                dev.device_type = device_type_for([i["interface_class"] for i in descriptor["interfaces"]])
+            if not enumeration["interface_order"] and descriptor:
+                enumeration["interface_order"] = [i["interface_class"] for i in descriptor["interfaces"]]
+            attached[dev.key] = dev
+            label = f"   CONNECT {dev.vendor_id}:{dev.product_id} ({dev.device_type}){' [no libusb descriptor]' if not descriptor else ''}"
+            report(sender.send(build_payload(HOSTNAME, dev, "connect", descriptor, enumeration)), label)
 
-        previous = current
+        if sender.queue and time.monotonic() - last_retry > RETRY_SECONDS:
+            last_retry = time.monotonic()
+            report(sender.flush(), "  SPOOLED")
 
 
 if __name__ == "__main__":
