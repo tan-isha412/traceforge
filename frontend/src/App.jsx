@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { API_URL, api, usePolling } from "./api.js";
+import { API_URL, DISPLAY_TZ, api, usePolling } from "./api.js";
 import DeviceList from "./components/DeviceList.jsx";
 import DevicePanel from "./components/DevicePanel.jsx";
 import { IncidentPanel, IncidentTable } from "./components/IncidentList.jsx";
@@ -9,12 +9,24 @@ export default function App() {
   const [tab, setTab] = useState("devices");
   const [deviceId, setDeviceId] = useState(null);
   const [incidentId, setIncidentId] = useState(null);
+  const [training, setTraining] = useState(null); // null | "running" | message
 
   const stats = usePolling(api.stats, "stats");
   const devices = usePolling(api.devices, "devices");
   const incidents = usePolling(api.incidents, "incidents");
 
   const offline = stats.error && !stats.data;
+
+  const retrain = async () => {
+    setTraining("running");
+    try {
+      const status = await api.train();
+      setTraining(`Model retrained on ${status.training_rows} events`);
+      stats.refresh();
+    } catch (e) {
+      setTraining(e.message);
+    }
+  };
   const openDevice = (id) => {
     setDeviceId(id);
     setTab("devices");
@@ -25,9 +37,13 @@ export default function App() {
       <header className="header">
         <div>
           <h1>TraceForge</h1>
-          <p className="muted">USB forensic investigation and device trust analysis</p>
+          <p className="muted">USB forensic investigation and device trust analysis · times in {DISPLAY_TZ}</p>
         </div>
         <div className="header-status">
+          {training && training !== "running" && <span className="muted small">{training}</span>}
+          <button className="btn" disabled={training === "running"} onClick={retrain}>
+            {training === "running" ? "Training…" : "Retrain model"}
+          </button>
           <span className={`chip ${stats.data?.ml_trained ? "chip-known" : "chip-unknown"}`}>
             ML model {stats.data?.ml_trained ? "trained" : "not trained"}
           </span>
@@ -63,7 +79,18 @@ export default function App() {
         </section>
         <section className="pane detail">
           {tab === "devices" && deviceId && <DevicePanel deviceId={deviceId} />}
+<<<<<<< Updated upstream
           {tab === "incidents" && incidentId && <IncidentPanel incidentId={incidentId} onOpenDevice={openDevice} onSelectIncident={setIncidentId} />}
+=======
+          {tab === "incidents" && incidentId && <IncidentPanel
+              incidentId={incidentId}
+              onOpenDevice={openDevice}
+              onChanged={() => {
+                incidents.refresh();
+                stats.refresh();
+              }}
+            />}
+>>>>>>> Stashed changes
           {((tab === "devices" && !deviceId) || (tab === "incidents" && !incidentId)) && (
             <div className="empty">Select {tab === "devices" ? "a device" : "an incident"} to investigate.</div>
           )}

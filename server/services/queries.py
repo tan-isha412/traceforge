@@ -75,18 +75,28 @@ def case_members(db: Session, inc: Incident) -> list[Incident]:
 
 
 def incident_summary(db: Session, inc: Incident) -> IncidentOut:
+    pairs = (
+        db.query(Event.device_id, Machine.hostname)
+        .join(IncidentEvent, IncidentEvent.event_id == Event.id)
+        .join(Machine, Machine.id == Event.machine_id)
+        .filter(IncidentEvent.incident_id == inc.id)
+        .distinct()
+        .all()
+    )
     count = db.query(func.count(IncidentEvent.event_id)).filter(IncidentEvent.incident_id == inc.id).scalar()
-    d = inc.device
+    label = lambda d: f"{d.vendor_id}:{d.product_id} {d.device_type or ''}".strip()
     return IncidentOut(
         id=inc.id,
         device_id=inc.device_id,
-        device_label=f"{d.vendor_id}:{d.product_id} {d.device_type or ''}".strip(),
-        machine_hostname=inc.machine.hostname,
+        device_label=label(inc.device),
+        devices=[label(db.get(Device, i)) for i in sorted({p[0] for p in pairs})],
+        machines=sorted({p[1] for p in pairs}),
         start_time=inc.start_time,
         end_time=inc.end_time,
         max_score=inc.max_score,
         level=level_for(inc.max_score),
         status=inc.status,
+        note=inc.note,
         event_count=count,
         case_id=inc.case_id,
         case_reason=inc.case_reason,

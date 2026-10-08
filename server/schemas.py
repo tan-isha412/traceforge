@@ -1,6 +1,12 @@
 from datetime import datetime
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+
+from server.timeutil import as_utc
+
+# SQLite returns naive datetimes; this makes every timestamp explicitly UTC in the JSON output.
+UTCDatetime = Annotated[datetime, AfterValidator(as_utc)]
 
 
 class ORM(BaseModel):
@@ -14,7 +20,7 @@ class EventIngest(BaseModel):
     serial_number: str | None = None
     device_type: str | None = None
     event_type: str  # "connect" | "disconnect"
-    timestamp: datetime | None = None
+    timestamp: UTCDatetime | None = None
     descriptor: dict | None = None
     # How the device enumerated: {"interface_order": [class codes in arrival order], "duration_ms": float}
     enumeration: dict | None = None
@@ -25,7 +31,7 @@ class EventOut(ORM):
     device_id: int
     machine_id: int
     event_type: str
-    timestamp: datetime
+    timestamp: UTCDatetime
 
 
 class IngestResult(BaseModel):
@@ -52,12 +58,12 @@ class RiskOut(ORM):
     score: float
     level: str
     reasoning: list
-    computed_at: datetime
+    computed_at: UTCDatetime
 
 
 class TimelineEntry(BaseModel):
     event_id: int
-    timestamp: datetime
+    timestamp: UTCDatetime
     event_type: str
     machine_hostname: str
     risk_score: float | None = None
@@ -71,8 +77,8 @@ class DeviceOut(BaseModel):
     product_id: str
     serial_number: str | None
     device_type: str | None
-    first_seen: datetime
-    last_seen: datetime | None
+    first_seen: UTCDatetime
+    last_seen: UTCDatetime | None
     event_count: int
     machine_count: int
     risk_score: float | None
@@ -89,16 +95,23 @@ class IncidentOut(BaseModel):
     id: int
     device_id: int
     device_label: str
-    machine_hostname: str
-    start_time: datetime
-    end_time: datetime
+    devices: list[str]
+    machines: list[str]
+    start_time: UTCDatetime
+    end_time: UTCDatetime
     max_score: float
     level: str
     status: str
+    note: str | None = None
     event_count: int
     case_id: int | None = None
     case_reason: str | None = None
     case_machines: list[str] = []  # every machine in this incident's cross-machine case
+
+
+class IncidentUpdate(BaseModel):
+    status: Literal["open", "investigating", "resolved"] | None = None
+    note: str | None = Field(default=None, max_length=2000)
 
 
 class IncidentDetailOut(IncidentOut):

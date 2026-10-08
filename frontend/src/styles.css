@@ -496,3 +496,86 @@ body {
     max-height: none;
   }
 }
+
+.incident-badges {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.incident.resolved {
+  opacity: 0.6;
+}
+.status-open {
+  color: var(--high);
+  background: var(--high-bg);
+}
+.status-investigating {
+  color: var(--accent);
+  background: var(--row-selected);
+}
+.status-resolved {
+  color: var(--low);
+  background: var(--low-bg);
+}
+
+.btn,
+.segmented button {
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+  text-transform: capitalize;
+}
+.btn:hover:not(:disabled),
+.segmented button:hover:not(:disabled) {
+  background: var(--row-hover);
+}
+.btn:disabled,
+.segmented button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.segmented {
+  display: inline-flex;
+  margin-bottom: 10px;
+}
+.segmented button {
+  border-radius: 0;
+  margin-left: -1px;
+}
+.segmented button:first-child {
+  border-radius: 8px 0 0 8px;
+  margin-left: 0;
+}
+.segmented button:last-child {
+  border-radius: 0 8px 8px 0;
+}
+.segmented button.active {
+  background: var(--row-selected);
+  border-color: var(--accent);
+  color: var(--accent);
+  position: relative;
+}
+.note {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  resize: vertical;
+  margin-bottom: 8px;
+}
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.error {
+  color: var(--critical);
+}

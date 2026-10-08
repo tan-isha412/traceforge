@@ -21,7 +21,7 @@ def stats(db: Session = Depends(get_db)):
         machines=db.query(func.count(Machine.id)).scalar(),
         events=db.query(func.count(Event.id)).scalar(),
         anomalies=db.query(func.count(Anomaly.id)).scalar(),
-        open_incidents=db.query(func.count(Incident.id)).filter(Incident.status == "open").scalar(),
+        open_incidents=db.query(func.count(Incident.id)).filter(Incident.status != "resolved").scalar(),
         high_risk_devices=high_risk,
         ml_trained=ml_model.status()["trained"],
     )

@@ -5,6 +5,7 @@ __pycache__/
 *.db
 .pytest_cache/
 server/model_artifacts/
+agent/pending_events.jsonl
 frontend/node_modules/
 frontend/dist/
 .claude/

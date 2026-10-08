@@ -98,11 +98,16 @@ class Incident(Base):
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     max_score: Mapped[float] = mapped_column(Float, default=0.0)
+<<<<<<< Updated upstream
     status: Mapped[str] = mapped_column(String, default="open")
     # Incidents on different machines that involve the same device (or a clone of its serial)
     # share a case_id: the id of the first incident in the group.
     case_id: Mapped[int | None] = mapped_column(ForeignKey("incidents.id"), nullable=True, index=True)
     case_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+=======
+    status: Mapped[str] = mapped_column(String, default="open")  # open | investigating | resolved
+    note: Mapped[str | None] = mapped_column(String, nullable=True)
+>>>>>>> Stashed changes
 
     device: Mapped["Device"] = relationship()
     machine: Mapped["Machine"] = relationship()

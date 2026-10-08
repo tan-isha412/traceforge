@@ -7,7 +7,7 @@ from datetime import timedelta
 from sqlalchemy.orm import Session
 
 from server.models import Event
-from server.timeutil import as_utc
+from server.timeutil import as_utc, to_local
 
 # Identity questions (unknown device, new machine, ...) belong to the rule engine;
 # the model only sees behaviour, so the two layers do not double count.
@@ -25,9 +25,7 @@ FEATURE_NAMES = [
 
 FEATURE_LABELS = {
     "gap_log": "inter-event timing",
-    "gap_vs_baseline": "inter-event timing vs this device's baseline",
     "hour_of_day": "time of day",
-    "hour_deviation": "distance from this device's usual hour",
     "events_last_hour": "connection frequency (last hour)",
     "events_last_day": "connection frequency (last 24h)",
     "machines_seen": "number of distinct machines",
@@ -58,43 +56,9 @@ def features_from_history(history: list[tuple], current: tuple) -> list[float]:
     prior = [(as_utc(h[0]), h[1], h[2] if len(h) > 2 else None) for h in history]
 
     gap = max((ts - prior[-1][0]).total_seconds(), 0.0) if prior else NEUTRAL_GAP_SECONDS
-    gaps = [max((b[0] - a[0]).total_seconds(), 1.0) for a, b in zip(prior, prior[1:])]
-    gap_vs_baseline = math.log2(max(gap, 1.0) / statistics.median(gaps)) if len(gaps) >= MIN_BASELINE_EVENTS else 0.0
-
-    hour = ts.hour + ts.minute / 60
-    hours = [p[0].hour + p[0].minute / 60 for p in prior]
-    hour_dev = _hour_distance(hour, _circular_mean_hour(hours)) if len(hours) >= MIN_BASELINE_EVENTS else 0.0
-
-    last_hour = sum(1 for p in prior if ts - p[0] <= timedelta(hours=1))
-    last_day = sum(1 for p in prior if ts - p[0] <= timedelta(days=1))
-    machines = {p[1] for p in prior} | {machine_id}
-
-    enum_ms = (enum or {}).get("duration_ms")
-    prior_ms = [float(p[2]["duration_ms"]) for p in prior if p[2] and p[2].get("duration_ms") is not None]
-    enum_vs_baseline = (
-        math.log2(max(float(enum_ms), 1.0) / max(statistics.median(prior_ms), 1.0))
-        if enum_ms is not None and len(prior_ms) >= MIN_BASELINE_EVENTS
-        else 0.0
-    )
-    order = (enum or {}).get("interface_order")
-    previous_order = next((p[2]["interface_order"] for p in reversed(prior) if p[2] and p[2].get("interface_order")), None)
-    order_changed = float(bool(order and previous_order and order != previous_order))
-
-    return [
-        math.log1p(gap),
-        gap_vs_baseline,
-        float(ts.hour),
-        hour_dev,
-        float(last_hour),
-        float(last_day),
-        float(len(machines)),
-        enum_vs_baseline,
-        order_changed,
-    ]
-
-
-def _enumeration(raw_payload: dict | None) -> dict | None:
-    return (raw_payload or {}).get("enumeration")
+    last_hour = sum(1 for t, _ in prior if ts - t <= timedelta(hours=1))
+    machines = {m for _, m in prior} | {machine_id}
+    return [math.log1p(gap), float(ts.hour), float(last_hour), float(len(machines))]
 
 
 def extract_event_features(db: Session, event: Event) -> list[float]:

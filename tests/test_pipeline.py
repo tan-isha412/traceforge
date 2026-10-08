@@ -1,4 +1,4 @@
-from tests.conftest import HID, make_event
+from tests.conftest import HID, MASS, make_event
 
 
 def post(client, **kw):
@@ -119,3 +119,83 @@ def test_stats_and_unknown_device_404(client):
     s = client.get("/stats").json()
     assert s["devices"] == 1 and s["events"] == 1 and s["machines"] == 1
     assert client.get("/devices/999").status_code == 404
+
+
+def test_api_timestamps_are_explicit_utc(client):
+    out = post(client, ts="2026-09-01T10:00:00Z")
+    timeline = client.get(f"/devices/{out['event']['device_id']}/timeline").json()
+    assert timeline[0]["timestamp"].endswith("Z")
+    assert timeline[0]["timestamp"].startswith("2026-09-01T10:00:00")
+
+
+def test_hour_feature_uses_local_timezone():
+    from datetime import datetime, timezone
+
+    from server.detection.features import features_from_history
+
+    # 22:30 UTC is 04:00 the next day in the default zone (Asia/Kolkata, UTC+5:30).
+    features = features_from_history([], (datetime(2026, 9, 1, 22, 30, tzinfo=timezone.utc), 1))
+    assert features[1] == 4.0
+
+
+def test_model_trained_under_another_timezone_is_ignored(client, monkeypatch):
+    from server.config import settings
+    from server.detection import ml_model
+
+    for day in range(1, 41):
+        post(client, ts=f"2026-08-{day:02d}T10:00:00Z" if day <= 31 else f"2026-09-{day - 31:02d}T10:00:00Z")
+    assert client.post("/ml/train").status_code == 200
+    assert ml_model.status()["trained"] is True
+    monkeypatch.setattr(settings, "timezone", "UTC")
+    assert ml_model.status()["trained"] is False
+
+
+SPOOF = dict(dtype="USB Input Device", descriptor=HID)
+
+
+def test_device_hopping_to_another_machine_joins_the_same_incident(client):
+    post(client)
+    first = post(client, ts="2026-09-02T03:00:00Z", **SPOOF)
+    hop = post(client, machine="PC-2", ts="2026-09-02T03:08:00Z", **SPOOF)
+    assert hop["incident_id"] == first["incident_id"]
+    detail = client.get(f"/incidents/{first['incident_id']}").json()
+    assert detail["machines"] == ["PC-1", "PC-2"]
+
+
+def test_second_suspicious_device_on_same_machine_joins_but_benign_one_does_not(client):
+    post(client, vid="1050", pid="0407", serial="11223344", dtype="USB Input Device", descriptor=HID)
+    mouse = dict(vid="046D", pid="C52B", serial="A1B2C3D4E5", dtype="USB Input Device", descriptor=HID)
+    post(client, ts="2026-09-01T10:00:00Z", **mouse)  # the mouse is a known device on this machine
+    first = post(client, vid="1D6B", pid="0104", serial="11223344", dtype="USB Input Device", descriptor=HID, ts="2026-09-02T14:00:00Z")
+    assert first["incident_id"] is not None
+    # Another cloned-serial attempt on the same machine 5 minutes later: suspicious, joins.
+    second = post(client, vid="1D6B", pid="0105", serial="11223344", dtype="USB Input Device", descriptor=HID, ts="2026-09-02T14:05:00Z")
+    assert second["incident_id"] == first["incident_id"]
+    # A routine known device on that machine in the same window is not dragged in.
+    routine = post(client, ts="2026-09-02T14:06:00Z", **mouse)
+    assert routine["risk_level"] == "low" and routine["incident_id"] is None
+
+
+def test_incident_workflow_status_note_and_resolved_incidents_stop_collecting(client):
+    post(client)
+    first = post(client, ts="2026-09-02T03:00:00Z", **SPOOF)
+    iid = first["incident_id"]
+
+    r = client.patch(f"/incidents/{iid}", json={"status": "investigating", "note": "Checking the drive."})
+    assert r.status_code == 200 and r.json()["status"] == "investigating" and r.json()["note"] == "Checking the drive."
+    assert client.get("/stats").json()["open_incidents"] == 1
+
+    assert client.patch(f"/incidents/{iid}", json={"status": "bogus"}).status_code == 422
+    assert client.patch("/incidents/999", json={"status": "open"}).status_code == 404
+
+    client.patch(f"/incidents/{iid}", json={"status": "resolved"})
+    assert client.get("/stats").json()["open_incidents"] == 0
+    later = post(client, ts="2026-09-02T03:05:00Z", **SPOOF)
+    assert later["incident_id"] != iid
+
+
+def test_uncaptured_descriptor_fields_do_not_trigger_mismatch(client):
+    post(client, descriptor={**MASS, "service": "USBSTOR"})
+    # Driver not bound yet: service missing, interface list empty. That is "unknown", not "changed".
+    out = post(client, descriptor={**MASS, "service": None, "interface_classes": []}, ts="2026-09-02T10:00:00Z")
+    assert "descriptor_mismatch" not in anomaly_names(client, out["event"]["device_id"])

@@ -126,10 +126,13 @@ def check_serial_format(db: Session, device: Device, is_new_device: bool, **_) -
 def check_descriptor_mismatch(device: Device, payload, **_) -> list[Finding]:
     recorded = device.descriptor_json or {}
     current = payload.descriptor or {}
+    # Missing/empty values mean "not captured yet" (e.g. driver not bound), not "changed".
     diffs = {
         f: {"recorded": recorded[f], "current": current[f]}
         for f in DESCRIPTOR_FIELDS
-        if f in recorded and f in current and recorded[f] != current[f]
+        if recorded.get(f) not in (None, [], "")
+        and current.get(f) not in (None, [], "")
+        and recorded[f] != current[f]
     }
     if not diffs:
         return []

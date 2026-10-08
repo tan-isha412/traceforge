@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 """Group related suspicious events into incidents, and incidents into cross-machine cases.
 
 1. Per machine: events for the same device on the same machine, close in time, form one incident.
@@ -5,6 +6,14 @@
    device presenting the same serial number (a clone), within CASE_WINDOW share a case_id.
    A device that already has an open incident and then shows up on another machine opens
    an incident there too, even if that connection alone scores low: that is the spread.
+=======
+"""Group related suspicious events into incidents.
+
+An event joins an active incident that ended within WINDOW when either:
+  - it involves a device already in the incident (the device may have moved to another machine), or
+  - it is itself suspicious and happened on a machine already in the incident (two devices, one compromise).
+Ordinary low-risk events from other devices are never dragged in just because they share a machine.
+>>>>>>> Stashed changes
 """
 
 from datetime import timedelta
@@ -14,6 +23,7 @@ from sqlalchemy.orm import Session
 from server.models import Device, Event, Incident, IncidentEvent, RiskScore
 from server.timeutil import as_utc
 
+<<<<<<< Updated upstream
 INCIDENT_THRESHOLD = 40.0  # a connection scoring this high opens an incident
 WINDOW = timedelta(minutes=30)  # events within this gap of the last one join the incident
 CASE_WINDOW = timedelta(hours=24)  # incidents on other machines this close in time join the case
@@ -57,21 +67,48 @@ def link_case(incident: Incident, others: list[Incident]) -> None:
         if o.case_id is None:
             o.case_id = case_id
             o.case_reason = o.case_reason or "First incident of a cross-machine case."
+=======
+INCIDENT_THRESHOLD = 40.0  # a connection scoring this high is suspicious and can open an incident
+WINDOW = timedelta(minutes=30)
+ACTIVE = ("open", "investigating")
+
+
+def _members(db: Session, incident_id: int) -> tuple[set[int], set[int]]:
+    rows = (
+        db.query(Event.device_id, Event.machine_id)
+        .join(IncidentEvent, IncidentEvent.event_id == Event.id)
+        .filter(IncidentEvent.incident_id == incident_id)
+        .distinct()
+        .all()
+    )
+    return {r[0] for r in rows}, {r[1] for r in rows}
+
+
+def _find_incident(db: Session, event: Event, suspicious: bool) -> Incident | None:
+    ts = as_utc(event.timestamp)
+    candidates = db.query(Incident).filter(Incident.status.in_(ACTIVE)).order_by(Incident.end_time.desc()).all()
+    for inc in candidates:
+        if ts - as_utc(inc.end_time) > WINDOW or ts < as_utc(inc.start_time) - WINDOW:
+            continue
+        devices, machines = _members(db, inc.id)
+        if event.device_id in devices or (suspicious and event.machine_id in machines):
+            return inc
+    return None
+>>>>>>> Stashed changes
 
 
 def correlate(db: Session, event: Event, risk: RiskScore) -> Incident | None:
     ts = as_utc(event.timestamp)
-    candidates = (
-        db.query(Incident)
-        .filter(Incident.device_id == event.device_id, Incident.machine_id == event.machine_id, Incident.status == "open")
-        .order_by(Incident.end_time.desc())
-        .all()
-    )
-    incident = next((i for i in candidates if ts - as_utc(i.end_time) <= WINDOW and ts >= as_utc(i.start_time) - WINDOW), None)
+    suspicious = risk.score >= INCIDENT_THRESHOLD
+    incident = _find_incident(db, event, suspicious)
 
     if incident is None:
+<<<<<<< Updated upstream
         others = cross_machine_incidents(db, event, ts) if event.event_type == "connect" else []
         if risk.score < INCIDENT_THRESHOLD and not others:
+=======
+        if not suspicious:
+>>>>>>> Stashed changes
             return None
         incident = Incident(
             device_id=event.device_id,

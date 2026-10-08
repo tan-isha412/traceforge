@@ -2,6 +2,8 @@
 
     python -m server.seed_synthetic_data --reset
 
+All hours below are local time (TIMEZONE in .env, default Asia/Kolkata); storage stays UTC.
+
 1. Six weeks of normal USB usage across five machines (rules only).
 2. Trains the Isolation Forest on that baseline.
 3. Replays planted attack scenarios through the live pipeline.
@@ -15,6 +17,7 @@ from server.database import Base, SessionLocal, engine, upgrade_schema
 from server.detection import ml_model
 from server.schemas import EventIngest
 from server.services.ingest import process_event
+from server.timeutil import local_tz
 
 
 def ep(direction, kind, size):
@@ -103,9 +106,14 @@ def ev(machine, dev, kind, ts, serial="keep", dtype="keep", descriptor="keep", v
         serial_number=s if serial == "keep" else serial,
         device_type=t if dtype == "keep" else dtype,
         event_type=kind,
+<<<<<<< Updated upstream
         timestamp=ts,
         descriptor=d,
         enumeration=enumeration_for(d, rng, enum_ms, enum_order) if kind == "connect" else None,
+=======
+        timestamp=ts.astimezone(timezone.utc),
+        descriptor=d if descriptor == "keep" else descriptor,
+>>>>>>> Stashed changes
     )
 
 
@@ -134,10 +142,12 @@ def attack_events(today: datetime) -> list[tuple[str, list[EventIngest]]]:
     burst = [ev("LAB-PC-01", "mouse", "connect", at(22, 40, 0) + timedelta(seconds=20 * i)) for i in range(9)]
     return [
         (
-            "A. Type-switching device (BadUSB): a Kingston flash drive re-appears as a keyboard at 03:12 on a new machine",
+            "A. Type-switching device (BadUSB): a Kingston flash drive re-appears as a keyboard at 03:12 (local) on a new machine, then hops to a second machine 8 minutes later (one cross-machine incident)",
             [
                 ev("LAB-PC-02", "kingston", "connect", at(3, 12), dtype=INPUT, descriptor=HID),
                 ev("LAB-PC-02", "kingston", "disconnect", at(3, 12, 40), dtype=INPUT, descriptor=HID),
+                ev("LAB-PC-03", "kingston", "connect", at(3, 20), dtype=INPUT, descriptor=HID),
+                ev("LAB-PC-03", "kingston", "disconnect", at(3, 21), dtype=INPUT, descriptor=HID),
             ],
         ),
         (
@@ -197,7 +207,8 @@ def main() -> None:
     upgrade_schema()
 
     rng = random.Random(args.seed)
-    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    tz = local_tz()
+    today = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
 
     with SessionLocal() as db:
         base = baseline_events(rng, today)
@@ -213,7 +224,7 @@ def main() -> None:
                 out = process_event(db, e)
                 if e.event_type == "connect":
                     names = [a.name for a in out.event.anomalies]
-                    print(f"  {e.timestamp:%H:%M:%S} score={out.risk.score:>5} {out.risk.level:<8} incident={out.incident.id if out.incident else '-'} {names}")
+                    print(f"  {e.timestamp.astimezone(tz):%H:%M:%S} score={out.risk.score:>5} {out.risk.level:<8} incident={out.incident.id if out.incident else '-'} {names}")
 
 
 if __name__ == "__main__":
