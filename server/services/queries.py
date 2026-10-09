@@ -1,10 +1,20 @@
 """Read-side helpers shared by the routers."""
 
+from datetime import datetime, timezone
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from server.models import Device, Event, Incident, IncidentEvent, Machine, RiskScore
-from server.schemas import AnomalyOut, DeviceDetailOut, DeviceOut, IncidentDetailOut, IncidentOut, TimelineEntry
+from server.schemas import (
+    AnomalyOut,
+    DeviceDetailOut,
+    DeviceOut,
+    ForensicReportOut,
+    IncidentDetailOut,
+    IncidentOut,
+    RiskOut,
+    TimelineEntry,
+)
 from server.scoring.risk import level_for
 
 
@@ -115,3 +125,45 @@ def incident_detail(db: Session, inc: Incident) -> IncidentDetailOut:
     )
     related = [incident_summary(db, m) for m in case_members(db, inc) if m.id != inc.id]
     return IncidentDetailOut(**incident_summary(db, inc).model_dump(), timeline=timeline_entries(events), related=related)
+
+
+def device_forensic_report(db: Session, device: Device) -> ForensicReportOut:
+    detail = device_detail(db, device)
+    events = device_events(db, device.id)
+    timeline = timeline_entries(events)
+    risk_scores = (
+        db.query(RiskScore)
+        .join(Event, Event.id == RiskScore.event_id)
+        .filter(RiskScore.device_id == device.id)
+        .order_by(Event.timestamp.desc(), Event.id.desc())
+        .all()
+    )
+
+    anomalies_summary: dict[str, int] = {}
+    for entry in timeline:
+        for a in entry.anomalies:
+            anomalies_summary[a.name] = anomalies_summary.get(a.name, 0) + 1
+
+    incident_rows = (
+        db.query(Incident)
+        .join(IncidentEvent, IncidentEvent.incident_id == Incident.id)
+        .join(Event, Event.id == IncidentEvent.event_id)
+        .filter(Event.device_id == device.id)
+        .distinct()
+        .order_by(Incident.start_time.desc())
+        .all()
+    )
+    incidents = [incident_summary(db, inc) for inc in incident_rows]
+
+    now_utc = datetime.now(timezone.utc)
+    report_id = f"TRC-FRN-{device.id:04d}-{int(now_utc.timestamp())}"
+
+    return ForensicReportOut(
+        report_id=report_id,
+        generated_at=now_utc,
+        device=detail,
+        risk_history=[RiskOut.model_validate(r) for r in risk_scores],
+        timeline=timeline,
+        anomalies_summary=anomalies_summary,
+        incidents=incidents,
+    )

@@ -114,8 +114,9 @@ These are simulated numbers: they show what each detector can separate, not accu
 | Method | Path | Purpose |
 | --- | --- | --- |
 | POST | `/events/ingest` | agent pushes a USB event (needs `X-API-Key` when `API_KEY` is set) |
-| GET | `/devices`, `/devices/{id}` | profiles with latest risk |
+| GET | `/devices?q=&risk_level=&known=`, `/devices/{id}` | profiles with latest risk, search and filtering |
 | GET | `/devices/{id}/timeline` | chronological events with anomalies |
+| GET | `/devices/{id}/export?format=json\|csv` | export complete forensic investigation dossier (JSON/CSV) |
 | GET | `/anomalies?device_id=&source=` | flagged anomalies with explanations |
 | GET | `/risk-scores/{device_id}` | score history with reasoning |
 | GET | `/incidents`, `/incidents/{id}` | correlated incidents, with their cross-machine case |

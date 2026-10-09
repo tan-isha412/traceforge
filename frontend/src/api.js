@@ -22,10 +22,19 @@ const send = (method, path, body) =>
 
 export const api = {
   stats: () => get("/stats"),
-  devices: () => get("/devices"),
+  devices: (params) => {
+    if (!params) return get("/devices");
+    const qs = new URLSearchParams();
+    if (params.q) qs.set("q", params.q);
+    if (params.risk_level) qs.set("risk_level", params.risk_level);
+    if (params.known !== undefined && params.known !== null) qs.set("known", params.known);
+    const query = qs.toString();
+    return get(query ? `/devices?${query}` : "/devices");
+  },
   device: (id) => get(`/devices/${id}`),
   timeline: (id) => get(`/devices/${id}/timeline`),
   riskHistory: (id) => get(`/risk-scores/${id}`),
+  exportDeviceUrl: (id, format = "json") => `${API_URL}/devices/${id}/export?format=${format}`,
   incidents: () => get("/incidents"),
   incident: (id) => get(`/incidents/${id}`),
   updateIncident: (id, changes) => send("PATCH", `/incidents/${id}`, changes),

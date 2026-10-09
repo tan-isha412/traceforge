@@ -127,3 +127,13 @@ class StatsOut(BaseModel):
     open_incidents: int
     high_risk_devices: int
     ml_trained: bool
+
+
+class ForensicReportOut(BaseModel):
+    report_id: str
+    generated_at: UTCDatetime
+    device: DeviceDetailOut
+    risk_history: list[RiskOut]
+    timeline: list[TimelineEntry]
+    anomalies_summary: dict[str, int]
+    incidents: list[IncidentOut]

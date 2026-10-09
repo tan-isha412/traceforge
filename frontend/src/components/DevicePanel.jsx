@@ -77,14 +77,40 @@ export default function DevicePanel({ deviceId }) {
     <div>
       {d && (
         <div className="card-section">
-          <h2>{d.device_type || "Unknown device"}</h2>
-          <div className="meta">
-            <span className="mono">
-              {d.vendor_id}:{d.product_id}
-            </span>
-            <span className="mono">serial {d.serial_number || "none"}</span>
-            <span>{d.event_count} events</span>
-            <span>seen on {d.machines.join(", ")}</span>
+          <div className="device-header-row">
+            <div>
+              <h2>{d.device_type || "Unknown device"}</h2>
+              <div className="meta">
+                <span className="mono">
+                  {d.vendor_id}:{d.product_id}
+                </span>
+                <span className="mono">serial {d.serial_number || "none"}</span>
+                <span>{d.event_count} events</span>
+                <span>seen on {d.machines.join(", ")}</span>
+              </div>
+            </div>
+            <div className="export-actions">
+              <a
+                href={api.exportDeviceUrl(deviceId, "json")}
+                target="_blank"
+                rel="noreferrer"
+                download={`forensic_report_${d.vendor_id}_${d.product_id}.json`}
+                className="btn btn-sm"
+                title="Download complete forensic JSON dossier"
+              >
+                Export JSON
+              </a>
+              <a
+                href={api.exportDeviceUrl(deviceId, "csv")}
+                target="_blank"
+                rel="noreferrer"
+                download={`timeline_${d.vendor_id}_${d.product_id}.csv`}
+                className="btn btn-sm"
+                title="Download event timeline CSV"
+              >
+                Export CSV
+              </a>
+            </div>
           </div>
         </div>
       )}

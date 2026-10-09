@@ -200,3 +200,51 @@ def test_uncaptured_descriptor_fields_do_not_trigger_mismatch(client):
     # Driver not bound yet: service missing, interface list empty. That is "unknown", not "changed".
     out = post(client, descriptor={**MASS, "service": None, "interface_classes": []}, ts="2026-09-02T10:00:00Z")
     assert "descriptor_mismatch" not in anomaly_names(client, out["event"]["device_id"])
+
+
+def test_device_search_and_filtering(client):
+    d1 = post(client, vid="0781", pid="5583", serial="FLASH-001", dtype="USB Mass Storage")
+    d2 = post(client, vid="046D", pid="C077", serial="MOUSE-999", dtype="USB Optical Mouse")
+
+    # Search by keyword
+    r_flash = client.get("/devices", params={"q": "FLASH"}).json()
+    assert len(r_flash) == 1
+    assert r_flash[0]["serial_number"] == "FLASH-001"
+
+    r_mouse = client.get("/devices", params={"q": "Optical"}).json()
+    assert len(r_mouse) == 1
+    assert r_mouse[0]["serial_number"] == "MOUSE-999"
+
+    # Filter by risk level
+    r_med = client.get("/devices", params={"risk_level": "medium"}).json()
+    assert all(d["risk_level"] == "medium" for d in r_med)
+
+    # Filter by known status (first connect is unknown)
+    r_unknown = client.get("/devices", params={"known": "false"}).json()
+    assert all(d["known"] is False for d in r_unknown)
+
+
+def test_device_forensic_export_json_and_csv(client):
+    out = post(client, vid="0781", pid="5583", serial="SND-987", dtype="USB Mass Storage")
+    dev_id = out["event"]["device_id"]
+
+    # JSON export
+    res_json = client.get(f"/devices/{dev_id}/export", params={"format": "json"})
+    assert res_json.status_code == 200
+    report = res_json.json()
+    assert report["report_id"].startswith(f"TRC-FRN-{dev_id:04d}-")
+    assert report["device"]["id"] == dev_id
+    assert report["device"]["vendor_id"] == "0781"
+    assert "timeline" in report and len(report["timeline"]) >= 1
+    assert "anomalies_summary" in report
+    assert "unknown_device" in report["anomalies_summary"]
+
+    # CSV export
+    res_csv = client.get(f"/devices/{dev_id}/export", params={"format": "csv"})
+    assert res_csv.status_code == 200
+    assert "text/csv" in res_csv.headers["content-type"]
+    assert "Event ID,Timestamp (UTC),Event Type,Machine,Risk Score,Risk Level,Anomalies Flagged" in res_csv.text
+    assert "unknown_device" in res_csv.text
+
+    # 404 for nonexistent device
+    assert client.get("/devices/99999/export").status_code == 404
