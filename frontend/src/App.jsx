@@ -9,7 +9,6 @@ export default function App() {
   const [tab, setTab] = useState("devices");
   const [deviceId, setDeviceId] = useState(null);
   const [incidentId, setIncidentId] = useState(null);
-  const [training, setTraining] = useState(null); // null | "running" | message
 
   const stats = usePolling(api.stats, "stats");
   const devices = usePolling(api.devices, "devices");
@@ -17,16 +16,6 @@ export default function App() {
 
   const offline = stats.error && !stats.data;
 
-  const retrain = async () => {
-    setTraining("running");
-    try {
-      const status = await api.train();
-      setTraining(`Model retrained on ${status.training_rows} events`);
-      stats.refresh();
-    } catch (e) {
-      setTraining(e.message);
-    }
-  };
   const openDevice = (id) => {
     setDeviceId(id);
     setTab("devices");
@@ -40,10 +29,6 @@ export default function App() {
           <p className="muted">USB forensic investigation and device trust analysis · times in {DISPLAY_TZ}</p>
         </div>
         <div className="header-status">
-          {training && training !== "running" && <span className="muted small">{training}</span>}
-          <button className="btn" disabled={training === "running"} onClick={retrain}>
-            {training === "running" ? "Training…" : "Retrain model"}
-          </button>
           <span className={`chip ${stats.data?.ml_trained ? "chip-known" : "chip-unknown"}`}>
             ML model {stats.data?.ml_trained ? "trained" : "not trained"}
           </span>
