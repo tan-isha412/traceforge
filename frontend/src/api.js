@@ -38,7 +38,6 @@ export const api = {
   incidents: () => get("/incidents"),
   incident: (id) => get(`/incidents/${id}`),
   updateIncident: (id, changes) => send("PATCH", `/incidents/${id}`, changes),
-  train: () => send("POST", "/ml/train"),
 };
 
 // Re-runs `load` every `ms`; returns { data, error, refresh }. `key` resets the data when the target changes.
