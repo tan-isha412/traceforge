@@ -21,11 +21,8 @@ class Settings(BaseSettings):
     ml_algorithm: Literal["iforest", "ocsvm"] = "iforest"
     # Retrain the model on stored history every N hours; 0 turns scheduled retraining off.
     retrain_interval_hours: float = 0
-    # Live alerts: events at or above this level are alerts; messages go to the channels configured below.
-    alert_min_level: Literal["medium", "high", "critical"] = "high"
-    alert_webhook_url: str | None = None  # Slack / Discord / Teams / Mattermost incoming webhook
-    telegram_bot_token: str | None = None
-    telegram_chat_id: str | None = None
+    # A copy to a USB storage device this large is flagged (large_transfer), as is 10x its usual.
+    exfil_threshold_mb: float = 500
 
 
 settings = Settings()

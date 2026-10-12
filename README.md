@@ -89,6 +89,8 @@ Trains on four weeks of synthetic normal usage, measures false alarms on two hel
 | rule | `programmable_hid_board` - a BadUSB-capable board (Digispark, Teensy, Flipper Zero, Arduino Leonardo/Micro) presenting a keyboard | 40 |
 | rule | `blocklisted_device` - an investigator blocklisted this device | 60 |
 | rule | `same_model_new_serial` - new unit of a model that was on this machine in the last 24 h, under a different serial (lookalike swap) | 10 |
+| rule | `keystroke_injection` - a new keyboard typed at machine speed (typing report) | 60 |
+| rule | `large_transfer` - a large copy to USB storage, by size or 10x its usual (at disconnect) | 35-50 |
 | rule | `new_source_machine` - device never connected to this machine before (silenced for devices marked trusted) | 15 |
 | ML | `behavioural_outlier` - Isolation Forest or One-Class SVM, explained with SHAP | 15-45 |
 | ML | `unseen_behaviour` - a feature far outside anything in the training data | 30 |
@@ -132,6 +134,43 @@ Off by default (`AUTH_ENABLED=false`) for local development. When on:
 
 Passwords are salted PBKDF2-SHA256. Bearer tokens are random, last 12 hours and are stored only as SHA-256. The audit log (`GET /audit`, the admin's Audit log tab) records sign-ins (including failed ones), sign-outs, incident changes, trust changes, retraining and user creation.
 
+## Attack graph and incident replay
+
+The **Attack graph** tab shows which devices touched which machines in the last 1, 7 or 30 days, with each link coloured by the worst risk seen on it. **Replay attack** on any incident plays its whole cross-machine case in time order (play/pause, slider, 1x/3x/8x), lighting machines up as the attack reaches them, with each step's findings and ATT&CK techniques. API: `GET /graph?days=7` or `GET /graph?incident_id=3`.
+
+## Importing evidence from seized machines
+
+Investigate a computer that never ran the agent, from the USB history its operating system already keeps (**Evidence import** tab, `POST /evidence/import`, or the command line):
+
+```bash
+.venv\Scripts\python -m server.manage import setupapi.dev.log --machine SEIZED-LAPTOP --registry usb.reg --timezone Asia/Kolkata
+.venv\Scripts\python -m server.manage import kern.log --timezone Asia/Kolkata --dry-run
+```
+
+| Source | How to get it | What it gives |
+| --- | --- | --- |
+| `C:\Windows\INF\setupapi.dev.log` | copy from the machine or disk image | each USB device's first install, with its time and serial |
+| Registry export | `reg export HKLM\SYSTEM\CurrentControlSet\Enum\USB usb.reg` | every device ever enumerated, with its name and driver (no times); fills in device types |
+| Linux kernel log | `journalctl -k -o short-iso > kern.log`, `/var/log/syslog`, `kern.log` | connects and disconnects with serial, storage and keyboard detection |
+
+Imported events go through the same rules, ML, trust, incidents and evidence chain as live ones. Each file is recorded with its SHA-256 (chain of custody) and cannot be imported twice; events the agent already reported are skipped. setupapi and syslog times are local, so give the seized machine's time zone.
+
+## Plain-English incident stories
+
+Every incident opens with **What happened**: a headline naming the kind of attack, what happened first, how it spread (with the gaps between machines), why it scored what it did, the behavioural model's reasons, ATT&CK techniques, trust and status, and recommended next steps (`GET /incidents/{id}/story`). It is written from templates on purpose: every sentence comes from stored evidence, so it is reproducible and never states what the evidence does not show.
+
+## Keystroke injection (typing speed)
+
+When a new device presents a keyboard, the agent records **when** its keys go down for 30 seconds and reports only timing statistics (count, rate, gaps, regularity); key codes are never read. People type with roughly 80-250 ms between keys and a lot of variation; `keystroke_injection` (+60) fires for 15+ keys at 25+ keys/s, or a median gap under 30 ms with almost no variation. Backends: python-evdev on Linux (the agent needs the `input` group), the Raw Input API on Windows. Set `TRACEFORGE_WATCH_TYPING=0` on the agent to turn it off.
+
+## Data exfiltration watch
+
+While a storage device is attached, the agent samples the OS's per-disk I/O counters (`/sys/block/*/stat`, WMI disk counters) and sends the bytes written and read with the disconnect; no file names or contents are read. `large_transfer` (T1052.001 Exfiltration over USB) fires for a copy of `EXFIL_THRESHOLD_MB` (default 500) or 10x the device's usual, scoring higher outside working hours.
+
+## Model health
+
+`GET /ml/drift` and the **Model health** tab compare recent normal activity with the training baseline using the Population Stability Index per feature (under 0.10 stable, 0.10-0.25 shifting, over 0.25 drifted), check the recent outlier rate against the expected ~3%, and say whether the model is healthy, should be watched, or should be retrained, and why.
+
 ## ML training
 
 - `ML_ALGORITHM=iforest` (default) or `ocsvm` picks the live detector; a saved model trained with the other algorithm is ignored.
@@ -150,6 +189,7 @@ Passwords are salted PBKDF2-SHA256. Bearer tokens are random, last 12 hours and 
 | `ML_ALGORITHM` | `iforest` | `iforest` or `ocsvm` |
 | `RETRAIN_INTERVAL_HOURS` | `0` | scheduled retraining |
 | `TIMEZONE` | `Asia/Kolkata` | what "night" means, and the zone the dashboard shows |
+| `EXFIL_THRESHOLD_MB` | `500` | a copy this large to USB storage is flagged |
 
 ## Measuring the ML model
 
@@ -189,6 +229,10 @@ These are simulated numbers: they show what each detector can separate, not accu
 | POST | `/ml/train` | retrain the model on stored history (admin login or `X-API-Key`) |
 | GET, POST | `/auth/config`, `/auth/login`, `/auth/logout`, `/auth/me`, `/auth/users` | logins and user management |
 | GET | `/audit?actor=&action=` | audit log (admin) |
+| GET | `/graph?days=`, `/graph?incident_id=` | attack graph, or one case's events for replay |
+| GET | `/incidents/{id}/story` | plain-English account with next steps |
+| POST, GET | `/evidence/import`, `/evidence/imports` | import seized-machine USB history (investigator); the import record |
+| GET | `/ml/drift?days=` | model health and drift per feature |
 
 Run the tests with `python -m pytest`.
 

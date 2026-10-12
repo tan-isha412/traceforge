@@ -897,93 +897,29 @@ body {
   line-height: 1.5;
 }
 
-/* Phase 3: live alerts */
-.live-alerts {
-  position: relative;
-  display: inline-flex;
+/* Phase 3: model health */
+.health-reasons {
+  margin: 8px 0;
+  padding-left: 18px;
+  line-height: 1.5;
 }
-.bell {
-  position: relative;
+.health-hint {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--critical-bg);
 }
-.bell-unread {
-  border-color: var(--critical);
-}
-.bell-count {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  min-width: 18px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--critical);
-  color: #fff;
-  font-size: 11px;
-  line-height: 18px;
-}
-.alert-panel {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: 20;
-  width: min(440px, calc(100vw - 32px));
-  max-height: 420px;
-  overflow-y: auto;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(10, 20, 40, 0.18);
-  padding: 8px;
-}
-.alert-panel-head {
+.psi-cell {
+  min-width: 180px;
   display: flex;
-  justify-content: space-between;
-  font-weight: 700;
-  font-size: 13px;
-  padding: 4px 6px 8px;
-}
-.alert-row {
-  display: flex;
+  align-items: center;
   gap: 8px;
-  align-items: flex-start;
-  width: 100%;
-  text-align: left;
-  font: inherit;
-  font-size: 13px;
-  color: var(--text);
-  background: none;
-  border: 0;
-  border-left: 3px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 8px;
-  cursor: pointer;
 }
-.alert-row:hover {
-  background: var(--row-hover);
+.psi-bar {
+  display: inline-block;
+  height: 8px;
+  border-radius: 4px;
+  min-width: 2px;
 }
-.alert-high { border-left-color: var(--high); }
-.alert-critical { border-left-color: var(--critical); }
-.alert-medium { border-left-color: var(--medium); }
-.toasts {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: min(360px, calc(100vw - 32px));
-}
-.toast {
-  text-align: left;
-  font: inherit;
-  font-size: 13px;
-  color: var(--text);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--high);
-  border-radius: 10px;
-  padding: 10px 12px;
-  box-shadow: 0 8px 24px rgba(10, 20, 40, 0.18);
-  cursor: pointer;
-}
-.toast.alert-critical { border-left-color: var(--critical); }
+.psi-low { background: var(--low); }
+.psi-medium { background: var(--medium); }
+.psi-critical { background: var(--critical); }

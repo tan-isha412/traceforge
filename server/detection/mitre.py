@@ -9,6 +9,7 @@ TECHNIQUES = {
     "T1036": ("Masquerading", "Defense Evasion"),
     "T1091": ("Replication Through Removable Media", "Lateral Movement"),
     "T1059": ("Command and Scripting Interpreter", "Execution"),
+    "T1052.001": ("Exfiltration over USB", "Exfiltration"),
 }
 
 FINDING_TECHNIQUES = {
@@ -21,6 +22,8 @@ FINDING_TECHNIQUES = {
     "descriptor_mismatch": ["T1200", "T1036"],
     "descriptor_model_mismatch": ["T1200", "T1036"],
     "programmable_hid_board": ["T1200", "T1059"],
+    "keystroke_injection": ["T1200", "T1059"],
+    "large_transfer": ["T1052.001"],
     "blocklisted_device": ["T1200"],
     "new_source_machine": ["T1091"],
 }
@@ -28,7 +31,7 @@ FINDING_TECHNIQUES = {
 
 def technique(tid: str) -> dict:
     name, tactic = TECHNIQUES[tid]
-    return {"id": tid, "name": name, "tactic": tactic, "url": f"https://attack.mitre.org/techniques/{tid}/"}
+    return {"id": tid, "name": name, "tactic": tactic, "url": f"https://attack.mitre.org/techniques/{tid.replace('.', '/')}/"}
 
 
 def techniques_for(finding_name: str) -> list[dict]:

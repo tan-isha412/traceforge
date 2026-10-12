@@ -102,7 +102,7 @@ export default function AttackGraph({ data, autoplay = false }) {
       <div className={`graph-caption ${current ? `graph-caption-${current.risk_level}` : ""}`}>
         {current ? (
           <>
-            <b>{formatTime(current.timestamp)}</b> · {current.event_type === "connect" ? "connected" : "disconnected"}{" "}
+            <b>{formatTime(current.timestamp)}</b> · {{ connect: "connected", disconnect: "disconnected", typing: "typed on" }[current.event_type] || current.event_type}{" "}
             <span className="mono">{device(current.device_id)?.label}</span> → <span className="mono">{machine(current.machine_id)?.hostname}</span> ·{" "}
             {current.risk_level} {Math.round(current.risk_score)}
             {current.findings.length > 0 && <span className="muted"> · {current.findings.join(", ")}</span>}

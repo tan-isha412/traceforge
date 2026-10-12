@@ -3,7 +3,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from server.database import get_db
-from server.detection import ml_model
+from server.detection import drift, ml_model
 from server.models import Anomaly, Device, Event, Incident, Machine, RiskScore
 from server.schemas import StatsOut
 from server import audit
@@ -32,6 +32,12 @@ def stats(db: Session = Depends(get_db)):
 @router.get("/ml/status", dependencies=[Depends(current_user)])
 def ml_status():
     return ml_model.status()
+
+
+@router.get("/ml/drift", dependencies=[Depends(current_user)])
+def ml_drift(days: float = 14, db: Session = Depends(get_db)):
+    """Model health: drift of recent normal behaviour from the training baseline (PSI per feature)."""
+    return drift.check(db, days)
 
 
 @router.post("/ml/train")

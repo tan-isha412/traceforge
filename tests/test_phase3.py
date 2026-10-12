@@ -215,106 +215,199 @@ def test_story_does_not_advise_blocklisting_a_device_that_already_is(client):
     assert steps and not any(s.startswith("Blocklist") for s in steps)
 
 
-# --- 3.5 live alerts ------------------------------------------------------------------------------
+# --- 3.3 keystroke-injection (BadUSB typing speed) ------------------------------------------------
 
-import pytest  # noqa: E402
-
-from server import alerts  # noqa: E402
-from server.config import settings  # noqa: E402
+from agent.keystrokes import summarize  # noqa: E402
 
 
-@pytest.fixture()
-def channels(client, monkeypatch):
-    """A webhook and Telegram configured, with delivery captured instead of sent."""
-    alerts._alerted.clear()
-    alerts.broker.recent.clear()
-    monkeypatch.setattr(settings, "alert_webhook_url", "https://hooks.example/abc")
-    monkeypatch.setattr(settings, "telegram_bot_token", "bot-token")
-    monkeypatch.setattr(settings, "telegram_chat_id", "42")
-    sent = []
-    monkeypatch.setattr(alerts, "_post_json", lambda url, body: sent.append((url, body)))
-    monkeypatch.setattr(alerts._sender, "submit", lambda fn, *a: fn(*a))  # deliver inline for the test
-    return sent
+def human_typing():
+    import random
+
+    rng = random.Random(3)
+    t, times = 2.0, []
+    for _ in range(60):
+        t += rng.uniform(0.08, 0.35)  # 80-350 ms, irregular
+        times.append(t)
+    return summarize(times, connected_at=0.0, watched_s=30)
 
 
-def test_every_event_reaches_the_live_feed_and_serious_ones_are_alerts(client, channels):
-    post(client)  # unknown device: medium, not an alert at the default "high"
-    post(client, ts="2026-09-02T03:00:00Z", **SPOOF)  # BadUSB: critical
-    recent = client.get("/alerts/recent").json()
-    assert [r["alert"] for r in recent] == [True, False]  # newest first
-    assert recent[0]["risk_level"] == "critical" and recent[0]["machine"] == "PC-1" and recent[0]["incident_id"]
-    assert client.get("/alerts/config").json() == {"min_level": "high", "channels": ["webhook", "telegram"]}
+def injected_typing():
+    times = [1.2 + i * 0.008 for i in range(400)]  # 8 ms apart, perfectly regular, 1.2 s after plug-in
+    return summarize(times, connected_at=0.0, watched_s=30)
 
 
-def test_one_message_per_incident_on_every_channel_and_again_only_if_it_escalates(client, channels):
-    post(client, descriptor=MASS)
-    post(client, ts="2026-09-02T03:00:00Z", vid="0951", pid="1666", serial=None)  # missing serial: high
-    first_batch = len(channels)
-    assert first_batch == 2  # webhook + Telegram
-    url, body = channels[0]
-    assert url == "https://hooks.example/abc" and "TraceForge HIGH" in body["text"] and body["content"] == body["text"]
-    assert channels[1][0] == "https://api.telegram.org/botbot-token/sendMessage" and channels[1][1]["chat_id"] == "42"
-
-    post(client, ts="2026-09-02T03:01:00Z", vid="0951", pid="1666", serial=None)  # same incident, same level
-    assert len(channels) == first_batch
-    post(client, ts="2026-09-02T03:02:00Z", vid="0951", pid="1666", serial=None, **SPOOF)  # escalates to critical
-    assert len(channels) == first_batch + 2 and "CRITICAL" in channels[-1][1]["text"]
+def test_timing_summary_has_no_key_identities_and_tells_people_from_machines():
+    human, machine = human_typing(), injected_typing()
+    assert set(machine) == {"keys", "watched_s", "first_key_after_s", "duration_s", "rate_per_s", "median_gap_ms", "min_gap_ms", "gap_cv", "burst_fraction"}
+    assert human["median_gap_ms"] > 80 and human["gap_cv"] > 0.2 and human["rate_per_s"] < 10
+    assert machine["median_gap_ms"] == 8.0 and machine["gap_cv"] < 0.01 and machine["rate_per_s"] > 100
+    assert machine["first_key_after_s"] == 1.2 and machine["burst_fraction"] == 1.0
 
 
-def test_imported_history_is_in_the_feed_but_never_pages_anyone(client, channels):
-    r = client.post("/evidence/import", json={"filename": "setupapi.dev.log", "content_b64": b64("setupapi.dev.log"), "machine_hostname": "SEIZED"})
-    assert r.json()["incidents"]
-    assert channels == []
-    assert all(item["imported"] for item in client.get("/alerts/recent").json())
+def typing_event(typing, **kw):
+    return {**make_event(dtype="USB Input Device", descriptor=HID, **kw), "event_type": "typing", "typing": typing}
 
 
-def test_a_failing_channel_does_not_break_ingestion(client, monkeypatch):
-    alerts._alerted.clear()
-    monkeypatch.setattr(settings, "alert_webhook_url", "https://hooks.example/down")
-
-    def down(url, body):
-        raise OSError("connection refused")
-
-    monkeypatch.setattr(alerts, "_post_json", down)
-    monkeypatch.setattr(alerts._sender, "submit", lambda fn, *a: fn(*a))
-    post(client, descriptor=MASS)
-    assert post(client, ts="2026-09-02T03:00:00Z", **SPOOF)["risk_level"] == "critical"
-
-
-def test_admin_can_send_a_test_message(client, channels):
-    r = client.post("/alerts/test").json()
-    assert r == {"configured": ["webhook", "telegram"], "delivered": ["webhook", "telegram"]}
+def test_machine_speed_typing_is_flagged_and_joins_the_device_incident(client):
+    connect = post(client, vid="046D", pid="C31C", serial="KB100", dtype="USB Input Device", descriptor=HID, ts="2026-09-02T03:00:00Z")
+    r = client.post("/events/ingest", json=typing_event(injected_typing(), vid="046D", pid="C31C", serial="KB100", ts="2026-09-02T03:00:31Z"))
+    assert r.status_code == 200
+    out = r.json()
+    assert out["risk_level"] in ("high", "critical") and out["incident_id"] is not None
+    finding = next(a for a in client.get("/anomalies", params={"device_id": 1}).json() if a["name"] == "keystroke_injection")
+    assert "400 keys" in finding["explanation"] and [t["id"] for t in finding["mitre"]] == ["T1200", "T1059"]
+    story = client.get(f"/incidents/{out['incident_id']}/story").json()
+    assert story["headline"].startswith("Keystroke-injection (BadUSB) attack")
+    assert "this was a machine typing" in " ".join(story["paragraphs"])
+    assert connect["incident_id"] is None  # the connection alone looked like an ordinary new keyboard
 
 
-def test_live_stream_needs_a_valid_token_when_logins_are_on(client, monkeypatch):
-    monkeypatch.setattr(settings, "auth_enabled", True)
-    assert client.get("/alerts/stream", params={"token": "nope"}).status_code == 401
+def test_a_person_typing_on_a_new_keyboard_is_not_flagged(client):
+    post(client, vid="046D", pid="C31C", serial="KB100", dtype="USB Input Device", descriptor=HID)
+    r = client.post("/events/ingest", json=typing_event(human_typing(), vid="046D", pid="C31C", serial="KB100", ts="2026-09-01T10:00:31Z")).json()
+    assert r["risk_level"] == "low" and r["incident_id"] is None
+    assert "keystroke_injection" not in {a["name"] for a in client.get("/anomalies").json()}
 
 
-def test_live_stream_delivers_events_as_server_sent_events(client):
-    import asyncio
-    import json as _json
+def test_agent_watches_only_devices_with_a_keyboard():
+    from types import SimpleNamespace
 
-    from server.routers import alerts as alert_routes
+    from agent.agent import has_keyboard
 
-    class FakeRequest:
-        def __init__(self):
-            self.calls = 0
+    boot_keyboard = {"interfaces": [{"interface_class": 3, "interface_protocol": 1}]}
+    mouse = {"interfaces": [{"interface_class": 3, "interface_protocol": 2}]}
+    stick = {"interfaces": [{"interface_class": 8, "interface_protocol": 80}]}
+    dev = SimpleNamespace(device_type=None)
+    assert has_keyboard(dev, boot_keyboard) and not has_keyboard(dev, mouse) and not has_keyboard(dev, stick)
+    assert has_keyboard(SimpleNamespace(device_type="USB Input Device"), None)
 
-        async def is_disconnected(self):
-            self.calls += 1
-            return self.calls > 2
 
-    async def scenario():
-        from server.database import SessionLocal
+# --- 3.6 data exfiltration watch ------------------------------------------------------------------
 
-        response = await alert_routes.stream(FakeRequest(), token=None, db=SessionLocal())
-        chunks = response.body_iterator
-        first = await chunks.__anext__()
-        alerts.broker.publish({"event_id": 7, "alert": True})
-        second = await chunks.__anext__()
-        return first, second
+GB = 1024**3
 
-    first, second = asyncio.run(scenario())
-    assert first.startswith(": connected")
-    assert second.startswith("event: usb\ndata: ") and _json.loads(second.split("data: ", 1)[1])["event_id"] == 7
+
+def unplug(client, written, ts, **kw):
+    body = {**make_event(kind="disconnect", ts=ts, **kw), "transfer": {"bytes_written": written, "bytes_read": 1000, "duration_s": 600}}
+    r = client.post("/events/ingest", json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_a_big_copy_at_night_is_flagged_as_usb_exfiltration(client):
+    post(client, ts="2026-09-01T17:30:00Z")  # 23:00 IST
+    out = unplug(client, int(3.2 * GB), "2026-09-01T17:50:00Z")
+    found = next(a for a in client.get("/anomalies").json() if a["name"] == "large_transfer")
+    assert "3.2 GB was written to the device during 10 minutes attached" in found["explanation"]
+    assert "outside working hours (23:00 local)" in found["explanation"] and found["weight"] == 50
+    assert [t["id"] for t in found["mitre"]] == ["T1052.001"] and found["mitre"][0]["url"].endswith("/T1052/001/")
+    assert out["risk_score"] > 40 and out["incident_id"] is not None
+    story = client.get(f"/incidents/{out['incident_id']}/story").json()
+    assert story["headline"].startswith("Possible data exfiltration to USB storage")
+    timeline = client.get("/devices/1/timeline").json()
+    assert timeline[-1]["transfer"]["bytes_written"] == int(3.2 * GB)
+
+
+def test_ten_times_the_devices_usual_copy_is_flagged_even_below_the_size_limit(client):
+    for day in range(1, 5):
+        post(client, ts=f"2026-09-0{day}T05:00:00Z")
+        unplug(client, 20 * 1024**2, f"2026-09-0{day}T05:30:00Z")  # a usual 20 MB, in working hours
+    post(client, ts="2026-09-06T05:00:00Z")
+    unplug(client, 300 * 1024**2, "2026-09-06T05:30:00Z")
+    found = [a for a in client.get("/anomalies").json() if a["name"] == "large_transfer"]
+    assert len(found) == 1 and "its usual is 20.0 MB" in found[0]["explanation"] and found[0]["weight"] == 35
+
+
+def test_an_ordinary_copy_is_not_flagged(client):
+    post(client)
+    out = unplug(client, 80 * 1024**2, "2026-09-01T10:30:00Z")
+    assert out["risk_level"] == "medium" and "large_transfer" not in {a["name"] for a in client.get("/anomalies").json()}
+
+
+def test_transfer_meter_reports_only_byte_counts(monkeypatch):
+    from agent import transfer
+
+    readings = iter([(100, 1000), (150, 5000), (400, 9000)])
+    meter = transfer.TransferMeter.__new__(transfer.TransferMeter)
+    meter.started, meter.first, meter.last = 0.0, None, None
+    meter._read = lambda: next(readings)
+    meter.sample(), meter.sample(), meter.sample()
+    totals = meter.totals()
+    assert totals["bytes_read"] == 300 and totals["bytes_written"] == 8000 and set(totals) == {"bytes_read", "bytes_written", "duration_s"}
+
+
+def test_a_copy_after_hours_attached_still_links_the_connection_it_closes(client):
+    post(client, ts="2026-09-01T12:00:00Z")
+    out = unplug(client, 2 * GB, "2026-09-01T17:00:00Z")  # 5 hours later, 22:30 IST
+    detail = client.get(f"/incidents/{out['incident_id']}").json()
+    assert [e["event_type"] for e in detail["timeline"]] == ["connect", "disconnect"]
+
+
+def test_history_with_disconnects_that_had_no_transfer_does_not_break_the_check(client):
+    post(client)
+    client.post("/events/ingest", json=make_event(kind="disconnect", ts="2026-09-01T10:20:00Z"))  # no transfer data
+    post(client, ts="2026-09-02T17:30:00Z")
+    out = unplug(client, 2 * GB, "2026-09-02T17:50:00Z")
+    assert "large_transfer" in {a["name"] for a in client.get("/anomalies").json()} and out["incident_id"]
+
+
+# --- 3.7 model health and drift -------------------------------------------------------------------
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from server.detection import drift, ml_model  # noqa: E402
+
+START = datetime(2026, 7, 1, tzinfo=timezone.utc)
+
+
+def daily(client, first_day, days, hour_utc):
+    for d in range(first_day, first_day + days):
+        ts = START + timedelta(days=d, hours=hour_utc, minutes=(d * 13) % 50)
+        post(client, ts=ts.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+
+def test_psi_is_zero_for_the_same_distribution_and_large_for_a_shifted_one():
+    import numpy as np
+
+    rng = np.random.default_rng(1)
+    train = rng.normal(10, 1, 500)
+    profile = ml_model._profile(train)
+    assert drift.psi(profile, rng.normal(10, 1, 500)) < drift.SHIFTING
+    assert drift.psi(profile, rng.normal(14, 1, 500)) > drift.DRIFTED
+
+
+def test_unchanged_habits_keep_the_model_healthy(client):
+    daily(client, 0, 40, hour_utc=4)  # ~10:00 IST every day
+    assert client.post("/ml/train").status_code == 200
+    daily(client, 40, 25, hour_utc=4)
+    h = client.get("/ml/drift", params={"days": 25}).json()
+    assert h["status"] == "healthy", h["reasons"]
+    assert h["recent_connections"] >= 20 and len(h["features"]) == 9
+
+
+def test_moving_to_evening_use_is_reported_as_drift_with_the_features_that_moved(client):
+    daily(client, 0, 40, hour_utc=4)  # trained on mornings
+    daily(client, 40, 25, hour_utc=13)  # then ~18:30 IST every day, before the model existed (rules only)
+    from server.database import SessionLocal
+    from server.detection.features import build_training_matrix
+
+    with SessionLocal() as db:
+        rows = build_training_matrix(db)[:40]
+    import numpy as np
+
+    ml_model._bundle = {**ml_model.fit_bundle(np.array(rows)), "trained_at": datetime.now(timezone.utc).isoformat()}
+    h = client.get("/ml/drift", params={"days": 25}).json()
+    assert h["status"] == "retrain_recommended", h
+    moved = {f["feature"] for f in h["features"] if f["band"] == "drifted"}
+    assert "hour_of_day" in moved
+    assert any("Drifted" in r for r in h["reasons"])
+
+
+def test_drift_check_explains_when_it_cannot_judge(client):
+    assert client.get("/ml/drift").json()["status"] == "not_trained"
+    daily(client, 0, 40, hour_utc=4)
+    client.post("/ml/train")
+    legacy = dict(ml_model._bundle)
+    legacy.pop("profile")
+    ml_model._bundle = legacy
+    assert client.get("/ml/drift").json()["status"] == "unknown"

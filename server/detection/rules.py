@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from server.detection import signatures
 from server.models import Device, Event, Machine
-from server.timeutil import as_utc
+from server.config import settings
+from server.timeutil import as_utc, to_local
 
 # Descriptor fields that must stay stable for a given physical device. The fingerprint
 # covers the full interface/endpoint tree when the agent can read it (see fingerprint.py).
@@ -253,6 +254,81 @@ def check_new_machine(db: Session, device: Device, machine: Machine, event: Even
             "new_source_machine",
             15,
             f"Device has never connected to {machine.hostname} before.",
+        )
+    ]
+
+
+# People type with roughly 80-250 ms between keys and a lot of variation; injection tools type
+# hundreds of keys a second with near-identical gaps.
+INJECTION_MIN_KEYS = 15
+INJECTION_RATE = 25.0  # keys per second
+INJECTION_MEDIAN_MS = 30.0
+INJECTION_MAX_CV = 0.35  # gap variation (stdev / mean); machine typing is very regular
+
+
+def check_keystroke_injection(typing: dict | None) -> list[Finding]:
+    """Runs on 'typing' reports, not connects: superhuman, machine-regular typing from a new keyboard."""
+    if not typing or typing.get("keys", 0) < INJECTION_MIN_KEYS or "median_gap_ms" not in typing:
+        return []
+    rate, median, cv = typing.get("rate_per_s", 0.0), typing["median_gap_ms"], typing.get("gap_cv", 1.0)
+    if rate < INJECTION_RATE and not (median < INJECTION_MEDIAN_MS and cv < INJECTION_MAX_CV):
+        return []
+    started = typing.get("first_key_after_s")
+    start = f", starting {started:g} s after it was plugged in" if started is not None else ""
+    return [
+        Finding(
+            "rule",
+            "keystroke_injection",
+            60,
+            f"Typed {typing['keys']} keys at {rate:g} keys/s with a median gap of {median:g} ms and almost no variation "
+            f"(gap CV {cv:g}){start}. People type with roughly 80-250 ms between keys: this is a machine typing.",
+            {k: typing.get(k) for k in ("keys", "rate_per_s", "median_gap_ms", "gap_cv", "first_key_after_s", "burst_fraction")},
+        )
+    ]
+
+
+MB = 1024 * 1024
+UNUSUAL_FACTOR, UNUSUAL_MIN_MB = 10, 50  # 10x this device's usual transfer, if at least 50 MB
+NIGHT = (7, 21)  # local hours outside this range count as off-hours
+
+
+def _size(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit in ("B", "KB") else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def check_large_transfer(db: Session, device: Device, event: Event, transfer: dict | None) -> list[Finding]:
+    """Runs on disconnects: a large copy to the device, by size or against its own history (T1052.001)."""
+    written = (transfer or {}).get("bytes_written") or 0
+    if not written:
+        return []
+    history = [
+        ((p or {}).get("transfer") or {}).get("bytes_written")  # older disconnects carry transfer=None
+        for (p,) in db.query(Event.raw_payload).filter(Event.device_id == device.id, Event.event_type == "disconnect", Event.id != event.id)
+    ]
+    history = sorted(h for h in history if h)
+    usual = history[len(history) // 2] if len(history) >= 3 else None
+    big = written >= settings.exfil_threshold_mb * MB
+    unusual = usual is not None and written >= UNUSUAL_FACTOR * usual and written >= UNUSUAL_MIN_MB * MB
+    if not (big or unusual):
+        return []
+    hour = to_local(event.timestamp).hour
+    night = not NIGHT[0] <= hour < NIGHT[1]
+    minutes = (transfer.get("duration_s") or 0) / 60
+    why = f"{_size(written)} was written to the device" + (f" during {minutes:.0f} minutes attached" if minutes >= 1 else "")
+    if usual:
+        why += f"; its usual is {_size(usual)}"
+    if night:
+        why += f", outside working hours ({hour:02d}:00 local)"
+    return [
+        Finding(
+            "rule",
+            "large_transfer",
+            50 if night else 35,
+            why + ". A large copy to removable storage is how data leaves on a USB stick.",
+            {"bytes_written": written, "bytes_read": transfer.get("bytes_read"), "usual_bytes": usual, "night": night},
         )
     ]
 

@@ -5,7 +5,7 @@ import DeviceList from "./components/DeviceList.jsx";
 import DevicePanel from "./components/DevicePanel.jsx";
 import EvidenceImport from "./components/EvidenceImport.jsx";
 import GraphView from "./components/GraphView.jsx";
-import LiveAlerts from "./components/LiveAlerts.jsx";
+import ModelHealth from "./components/ModelHealth.jsx";
 import { IncidentPanel, IncidentTable } from "./components/IncidentList.jsx";
 import Login from "./components/Login.jsx";
 import StatCards from "./components/StatCards.jsx";
@@ -89,11 +89,6 @@ function Dashboard({ user, onLogout }) {
     setDeviceId(id);
     setTab("devices");
   };
-  const openIncident = (id) => {
-    setIncidentId(id);
-    setTab("incidents");
-    incidents.refresh();
-  };
 
   return (
     <div className="app">
@@ -111,7 +106,6 @@ function Dashboard({ user, onLogout }) {
             {ALGORITHMS[ml.data?.algorithm] || "ML"} · {ml.data?.trained ? "trained" : "not trained"}
           </span>
           <span className={`live ${offline ? "live-off" : ""}`}>{offline ? "server offline" : "live"}</span>
-          <LiveAlerts onOpenIncident={openIncident} />
           {user && (
             <span className="user-menu">
               <span className="chip" title={`Signed in as ${user.role}`}>
@@ -147,6 +141,9 @@ function Dashboard({ user, onLogout }) {
         <button className={tab === "evidence" ? "active" : ""} onClick={() => setTab("evidence")}>
           Evidence import
         </button>
+        <button className={tab === "model" ? "active" : ""} onClick={() => setTab("model")}>
+          Model health
+        </button>
         {isAdmin && (
           <button className={tab === "audit" ? "active" : ""} onClick={() => setTab("audit")}>
             Audit log
@@ -154,11 +151,12 @@ function Dashboard({ user, onLogout }) {
         )}
       </nav>
 
-      {["audit", "graph", "evidence"].includes(tab) ? (
+      {["audit", "graph", "evidence", "model"].includes(tab) ? (
         <section className="pane">
           {tab === "audit" && <AuditLog />}
           {tab === "graph" && <GraphView />}
           {tab === "evidence" && <EvidenceImport />}
+          {tab === "model" && <ModelHealth />}
         </section>
       ) : (
         <main className="split">

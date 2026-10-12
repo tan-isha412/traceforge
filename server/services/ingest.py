@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from server import alerts, integrity
+from server import integrity
 from server.detection import fingerprint, ml_model
-from server.detection.rules import run_rules
+from server.detection.rules import check_keystroke_injection, check_large_transfer, run_rules
 from server.incidents.correlate import correlate
 from server.models import Anomaly, Device, Event, Incident, Machine, RiskScore
 from server.schemas import EventIngest
@@ -63,9 +63,7 @@ def get_or_create_device(db: Session, payload: EventIngest) -> tuple[Device, boo
 
 def process_event(db: Session, payload: EventIngest) -> IngestOutcome:
     with integrity.chain_lock:
-        outcome = _process(db, payload)
-    alerts.on_event(outcome)  # outside the lock: the live feed and messages never slow the chain
-    return outcome
+        return _process(db, payload)
 
 
 def _process(db: Session, payload: EventIngest) -> IngestOutcome:
@@ -92,8 +90,16 @@ def _process(db: Session, payload: EventIngest) -> IngestOutcome:
         for f in findings:
             db.add(Anomaly(event_id=event.id, source=f.source, name=f.name, weight=f.weight, explanation=f.explanation, detail=f.detail))
         risk = score_connect_event(db, event, findings)
+    elif payload.event_type == "typing":
+        findings = check_keystroke_injection(payload.typing)
+        for f in findings:
+            db.add(Anomaly(event_id=event.id, source=f.source, name=f.name, weight=f.weight, explanation=f.explanation, detail=f.detail))
+        risk = score_connect_event(db, event, findings)
     else:
-        risk = score_disconnect_event(db, event)
+        findings = check_large_transfer(db, device, event, payload.transfer)
+        for f in findings:
+            db.add(Anomaly(event_id=event.id, source=f.source, name=f.name, weight=f.weight, explanation=f.explanation, detail=f.detail))
+        risk = score_disconnect_event(db, event, findings)
     db.flush()
 
     incident = correlate(db, event, risk)

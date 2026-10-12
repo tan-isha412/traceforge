@@ -21,7 +21,7 @@ class EventIngest(BaseModel):
     product_id: str
     serial_number: str | None = None
     device_type: str | None = None
-    event_type: str  # "connect" | "disconnect"
+    event_type: str  # "connect" | "disconnect" | "typing" (keystroke-timing report for a new keyboard)
     timestamp: UTCDatetime | None = None
     descriptor: dict | None = None
     # How the device enumerated: {"interface_order": [class codes in arrival order], "duration_ms": float}
@@ -29,6 +29,10 @@ class EventIngest(BaseModel):
     # Where the event came from: None for the live agent, "import:setupapi" etc. for imported evidence.
     source: str | None = None
     evidence: dict | None = None  # the imported file and line context, for chain of custody
+    # Keystroke timing from a new keyboard (agent/keystrokes.py): counts and gaps only, never which keys.
+    typing: dict | None = None
+    # Bytes moved while a storage device was attached (agent/transfer.py), sent with its disconnect.
+    transfer: dict | None = None
 
 
 class EventOut(ORM):
@@ -80,6 +84,8 @@ class TimelineEntry(BaseModel):
     risk_level: str | None = None
     anomalies: list[AnomalyOut] = []
     record_hash: str | None = None  # this event's link in the evidence chain
+    transfer: dict | None = None  # bytes moved while attached, on disconnects
+    source: str | None = None  # None for the live agent, "import:..." for imported evidence
 
 
 class DeviceOut(BaseModel):

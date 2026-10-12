@@ -64,6 +64,18 @@ def status() -> dict:
     }
 
 
+PROFILE_BINS = 10
+
+
+def _profile(column: np.ndarray) -> dict:
+    """Decile edges of one feature in the training data and the share of rows in each bin."""
+    edges = np.unique(np.quantile(column, np.linspace(0, 1, PROFILE_BINS + 1)))
+    if len(edges) < 2:  # a feature that never varied: one bin around its value
+        edges = np.array([column[0] - 0.5, column[0] + 0.5])
+    counts, _ = np.histogram(np.clip(column, edges[0], edges[-1]), bins=edges)
+    return {"edges": edges.tolist(), "shares": (counts / max(counts.sum(), 1)).tolist()}
+
+
 def fit_bundle(X: np.ndarray, algorithm: str = "iforest") -> dict:
     if algorithm == "ocsvm":
         # SVM distances depend on feature scale, so the features are standardised first.
@@ -82,6 +94,8 @@ def fit_bundle(X: np.ndarray, algorithm: str = "iforest") -> dict:
         # most outlying training point is what counts as maximum severity for the One-Class SVM.
         "span": SEVERITY_SPAN if algorithm == "iforest" else max(threshold - float(scores.min()), 1e-6),
         "background": X[rng.choice(len(X), size=min(BACKGROUND_ROWS, len(X)), replace=False)],
+        # Each feature's training distribution, for drift monitoring (server/detection/drift.py).
+        "profile": [_profile(X[:, i]) for i in range(X.shape[1])],
         "training_rows": len(X),
         "features": FEATURE_NAMES,
         "median": np.median(X, axis=0),

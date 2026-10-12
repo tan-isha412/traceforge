@@ -44,12 +44,14 @@ def compute_trust(db: Session, device: Device) -> Trust:
         why = f"Blocklisted by an investigator{': ' + device.trust_note if device.trust_note else ''}."
         return Trust(0.0, "blocklisted", status, [{"factor": "blocklisted", "weight": -100.0, "explanation": why}])
 
-    connects = (
-        db.query(Event.timestamp, RiskScore.score)
+    scored = (
+        db.query(Event.timestamp, RiskScore.score, Event.event_type)
         .join(RiskScore, RiskScore.event_id == Event.id)
-        .filter(Event.device_id == device.id, Event.event_type == "connect")
+        .filter(Event.device_id == device.id, Event.event_type != "disconnect")
         .all()
     )
+    connects = [(t, s) for t, s, kind in scored if kind == "connect"]
+    recent_pool = [(t, s) for t, s, _ in scored]  # a typing report's risk counts against trust too
     factors = [{"factor": "baseline", "weight": BASE_TRUST, "explanation": "Starting trust for any device."}]
     if connects:
         clean = sum(1 for _, s in connects if s < CLEAN_SCORE)
@@ -63,7 +65,8 @@ def compute_trust(db: Session, device: Device) -> Trust:
         if age >= 0.5:
             factors.append({"factor": "history_age", "weight": round(age, 1), "explanation": f"Known for {days:.0f} day(s)."})
 
-        recent = max(s for t, s in connects if as_utc(t) >= last - RECENT_WINDOW)
+        last = max(last, max(as_utc(t) for t, _ in recent_pool))
+        recent = max(s for t, s in recent_pool if as_utc(t) >= last - RECENT_WINDOW)
         if recent:
             factors.append(
                 {

@@ -32,6 +32,8 @@ def timeline_entries(events: list[Event]) -> list[TimelineEntry]:
             risk_level=e.risk_score.level if e.risk_score else None,
             anomalies=[AnomalyOut.model_validate(a) for a in e.anomalies],
             record_hash=e.record_hash,
+            transfer=(e.raw_payload or {}).get("transfer"),
+            source=(e.raw_payload or {}).get("source"),
         )
         for e in events
     ]
