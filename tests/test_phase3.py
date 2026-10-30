@@ -263,9 +263,12 @@ def test_machine_speed_typing_is_flagged_and_joins_the_device_incident(client):
 
 
 def test_a_person_typing_on_a_new_keyboard_is_not_flagged(client):
-    post(client, vid="046D", pid="C31C", serial="KB100", dtype="USB Input Device", descriptor=HID)
+    connect = post(client, vid="046D", pid="C31C", serial="KB100", dtype="USB Input Device", descriptor=HID)
     r = client.post("/events/ingest", json=typing_event(human_typing(), vid="046D", pid="C31C", serial="KB100", ts="2026-09-01T10:00:31Z")).json()
-    assert r["risk_level"] == "very_low" and r["incident_id"] is None
+    # Human typing adds nothing: the report keeps the connection's own risk (a never-seen keyboard),
+    # it neither raises it nor resets it to Very Low.
+    assert r["risk_score"] == connect["risk_score"] and r["risk_level"] == connect["risk_level"]
+    assert r["incident_id"] is None
     assert "keystroke_injection" not in {a["name"] for a in client.get("/anomalies").json()}
 
 

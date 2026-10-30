@@ -8,7 +8,6 @@ reports the totals with the disconnect event.
   Windows  WMI: Win32_DiskDrive (matched by the USBSTOR serial) -> Win32_PerfRawData_PerfDisk_PhysicalDisk
 """
 
-import glob
 import os
 import sys
 import time
@@ -17,7 +16,15 @@ SECTOR = 512  # /sys/block/*/stat counts 512-byte sectors regardless of the disk
 
 
 def _linux_disks(sys_path: str) -> list[str]:
-    return sorted({os.path.basename(p) for p in glob.glob(os.path.join(sys_path, "**", "block", "*"), recursive=True)})
+    """Block devices under the USB device's sysfs directory. os.walk does not follow symlinks:
+    sysfs is full of links back up the tree (subsystem, driver, port), which a recursive glob
+    would wander through."""
+    disks = set()
+    for root, dirs, _ in os.walk(sys_path, followlinks=False):
+        if os.path.basename(root) == "block":
+            disks.update(dirs)
+            dirs.clear()
+    return sorted(disks)
 
 
 def _linux_counters(disks: list[str]) -> tuple[int, int] | None:

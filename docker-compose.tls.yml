@@ -1,0 +1,18 @@
+# HTTPS for the API. First create the certificates (once):
+#   docker compose run --rm -v "${PWD}/certs:/app/certs" server python -m server.manage tls-init --out certs --host <this PC's IP or name>
+# then start with both files:
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d --build
+# Trust certs/ca.crt in the browser (Windows: certutil -user -addstore Root certs\ca.crt) and on each agent
+# (TRACEFORGE_CA_BUNDLE=path\to\ca.crt, TRACEFORGE_SERVER=https://<name>:8000).
+services:
+  server:
+    environment:
+      TLS_CERT_FILE: /certs/server.crt
+      TLS_KEY_FILE: /certs/server.key
+    volumes:
+      - ./certs:/certs:ro
+
+  dashboard:
+    build:
+      args:
+        VITE_API_URL: ${VITE_API_URL:-https://localhost:8000}

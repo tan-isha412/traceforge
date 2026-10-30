@@ -57,6 +57,8 @@ def check(db: Session, days: float = 14) -> dict:
         return {"status": "unknown", "reasons": ["This model was trained before drift monitoring existed: retrain it to enable the check."], "features": []}
 
     latest = db.query(func.max(Event.timestamp)).scalar()
+    if latest is None:
+        return {"status": "insufficient_data", "reasons": ["No events stored yet."], "features": []}
     since = as_utc(latest) - timedelta(days=days)
     suspicious = {e for (e,) in db.query(IncidentEvent.event_id).all()}
     recent = [

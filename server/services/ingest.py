@@ -7,11 +7,11 @@ from sqlalchemy.orm import Session
 
 from server import integrity
 from server.detection import fingerprint, ml_model
-from server.detection.rules import check_keystroke_injection, check_large_transfer, run_rules
+from server.detection.rules import Finding, check_event_time, check_keystroke_injection, check_large_transfer, run_rules
 from server.incidents.correlate import correlate
 from server.models import Anomaly, Device, Event, Incident, Machine, RiskScore
 from server.schemas import EventIngest
-from server.scoring.risk import score_connect_event, score_disconnect_event
+from server.scoring.risk import score_connect_event, score_followup_event
 
 
 @dataclass
@@ -61,12 +61,18 @@ def get_or_create_device(db: Session, payload: EventIngest) -> tuple[Device, boo
     return device, True
 
 
-def process_event(db: Session, payload: EventIngest) -> IngestOutcome:
+def process_event(db: Session, payload: EventIngest, reported_by: str | None = None) -> IngestOutcome:
     with integrity.chain_lock:
-        return _process(db, payload)
+        return _process(db, payload, reported_by)
 
 
-def _process(db: Session, payload: EventIngest) -> IngestOutcome:
+def _record(db: Session, event: Event, findings: list[Finding]) -> None:
+    for f in findings:
+        db.add(Anomaly(event_id=event.id, source=f.source, name=f.name, weight=f.weight, explanation=f.explanation, detail=f.detail))
+
+
+def _process(db: Session, payload: EventIngest, reported_by: str | None) -> IngestOutcome:
+    received_at = datetime.now(timezone.utc)
     payload = payload.model_copy(update={"descriptor": fingerprint.enrich(payload.descriptor)})
     machine = get_or_create_machine(db, payload.machine_hostname)
     device, is_new_device = get_or_create_device(db, payload)
@@ -75,31 +81,28 @@ def _process(db: Session, payload: EventIngest) -> IngestOutcome:
         device_id=device.id,
         machine_id=machine.id,
         event_type=payload.event_type,
-        timestamp=payload.timestamp or datetime.now(timezone.utc),
+        timestamp=payload.timestamp or received_at,
         raw_payload=payload.model_dump(mode="json"),
+        received_at=received_at,
+        reported_by=reported_by or (payload.source if payload.source else None),
     )
     db.add(event)
     db.flush()
     integrity.link(db, event)
 
+    findings = check_event_time(event, received_at, imported=payload.source is not None)
     if payload.event_type == "connect":
-        findings = run_rules(
-            db, device=device, machine=machine, event=event, payload=payload, is_new_device=is_new_device
-        )
+        findings += run_rules(db, device=device, machine=machine, event=event, payload=payload, is_new_device=is_new_device)
         findings += ml_model.detect(db, event)
-        for f in findings:
-            db.add(Anomaly(event_id=event.id, source=f.source, name=f.name, weight=f.weight, explanation=f.explanation, detail=f.detail))
-        risk = score_connect_event(db, event, findings)
-    elif payload.event_type == "typing":
-        findings = check_keystroke_injection(payload.typing)
-        for f in findings:
-            db.add(Anomaly(event_id=event.id, source=f.source, name=f.name, weight=f.weight, explanation=f.explanation, detail=f.detail))
+        _record(db, event, findings)
         risk = score_connect_event(db, event, findings)
     else:
-        findings = check_large_transfer(db, device, event, payload.transfer)
-        for f in findings:
-            db.add(Anomaly(event_id=event.id, source=f.source, name=f.name, weight=f.weight, explanation=f.explanation, detail=f.detail))
-        risk = score_disconnect_event(db, event, findings)
+        if payload.event_type == "typing":
+            findings += check_keystroke_injection(payload.typing)
+        else:  # disconnect
+            findings += check_large_transfer(db, device, event, payload.transfer)
+        _record(db, event, findings)
+        risk = score_followup_event(db, event, findings)
     db.flush()
 
     incident = correlate(db, event, risk)

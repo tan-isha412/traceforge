@@ -590,9 +590,19 @@ body {
 
 .device-header-row {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
+}
+.export-result {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
 }
 
 .export-actions {
@@ -756,10 +766,7 @@ body {
   justify-content: flex-end;
 }
 .export-hash {
-  width: 100%;
-  max-width: 260px;
   word-break: break-all;
-  text-align: right;
 }
 
 /* Phase 3: attack graph and incident replay */
@@ -923,3 +930,45 @@ body {
 .psi-low { background: var(--low); }
 .psi-medium { background: var(--medium); }
 .psi-critical { background: var(--critical); }
+
+/* The NIST SP 800-30 rating behind each Sigma rule finding */
+.standard-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 4px;
+  color: var(--muted, #8a8f98);
+}
+.rating {
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+}
+.rating-critical { color: #e5484d; }
+.rating-high { color: #f76b15; }
+.rating-medium { color: #d6a100; }
+.rating-low, .rating-none { color: #46a758; }
+
+/* Signed exports (server/signing.py) */
+.signature-box {
+  width: 100%;
+  max-width: 260px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 10px;
+  text-align: right;
+}
+.sig-ok { color: #2f9e5b; font-weight: 600; }
+.sig-bad { color: #e5484d; font-weight: 600; }
+.sig-actions { display: inline-flex; gap: 10px; }
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent, #3b82f6);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}

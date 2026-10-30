@@ -7,7 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
-from server import audit
+from server import audit, signing
 from server.auth import actor, current_user, require_role
 from server.database import get_db
 from server.models import Device, User
@@ -118,14 +118,19 @@ def export_device_forensic_report(
             ])
 
         filename = f"forensic_report_{device.vendor_id}_{device.product_id}_{device_id}.csv"
-        return _signed(output.getvalue(), "text/csv", filename)
+        return _signed_response(output.getvalue(), "text/csv", filename)
 
     filename = f"forensic_report_{device.vendor_id}_{device.product_id}_{device_id}.json"
-    return _signed(report.model_dump_json(indent=2), "application/json", filename)
+    return _signed_response(report.model_dump_json(indent=2), "application/json", filename)
 
 
-def _signed(content: str, media_type: str, filename: str) -> Response:
-    """The SHA-256 of the exact bytes sent, so a saved copy of the report can be checked later."""
+SIGNATURE_HEADERS = ("X-Content-SHA256", "X-Signature", "X-Signature-Algorithm", "X-Signature-Key-Id")
+
+
+def _signed_response(content: str, media_type: str, filename: str) -> Response:
+    """The report with its SHA-256 (integrity: the file is unchanged) and an RSA-PSS signature over
+    the exact bytes sent (authenticity: this server produced it). Save the signature as a .sig
+    file next to the report; tools/verify_signature.py checks them offline."""
     body = content.encode()
     return Response(
         content=body,
@@ -133,6 +138,9 @@ def _signed(content: str, media_type: str, filename: str) -> Response:
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Content-SHA256": hashlib.sha256(body).hexdigest(),
-            "Access-Control-Expose-Headers": "X-Content-SHA256",
+            "X-Signature": signing.sign(body),
+            "X-Signature-Algorithm": signing.ALGORITHM,
+            "X-Signature-Key-Id": signing.key_id(),
+            "Access-Control-Expose-Headers": ", ".join(SIGNATURE_HEADERS),
         },
     )

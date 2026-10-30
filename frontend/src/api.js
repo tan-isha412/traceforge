@@ -40,15 +40,39 @@ async function request(path, options) {
   return res.status === 204 ? null : res.json();
 }
 
-// Downloads an export with the login token and returns the SHA-256 the server computed for it.
-async function download(path, filename) {
-  const res = await fetch(`${API_URL}${path}`, withAuth());
-  if (!res.ok) throw new Error(`${res.status} ${path}`);
-  const url = URL.createObjectURL(await res.blob());
+export function saveFile(data, filename, type = "application/octet-stream") {
+  const url = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type }));
   const a = Object.assign(document.createElement("a"), { href: url, download: filename });
   a.click();
   URL.revokeObjectURL(url);
-  return res.headers.get("X-Content-SHA256");
+}
+
+// Downloads an export with the login token. Returns the exact bytes plus the server's SHA-256 and
+// RSA-PSS signature for them, so the dashboard can verify the signature before anyone relies on it.
+async function download(path, filename) {
+  const res = await fetch(`${API_URL}${path}`, withAuth());
+  if (!res.ok) throw new Error(`${res.status} ${path}`);
+  const bytes = await res.arrayBuffer();
+  saveFile(new Blob([bytes], { type: res.headers.get("Content-Type") || "application/octet-stream" }), filename);
+  return {
+    bytes,
+    sha256: res.headers.get("X-Content-SHA256"),
+    signature: res.headers.get("X-Signature"),
+    algorithm: res.headers.get("X-Signature-Algorithm"),
+    keyId: res.headers.get("X-Signature-Key-Id"),
+  };
+}
+
+const b64ToBytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+
+// Verifies an RSA-PSS-SHA256 signature in the browser (WebCrypto) against the server's public key.
+// Returns true/false, or null where WebCrypto is unavailable (pages served over plain http from
+// another machine): then verify offline with tools/verify_signature.py.
+export async function verifySignature(bytes, signatureB64, publicKeyPem) {
+  if (!globalThis.crypto?.subtle) return null;
+  const der = b64ToBytes(publicKeyPem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, ""));
+  const key = await crypto.subtle.importKey("spki", der, { name: "RSA-PSS", hash: "SHA-256" }, false, ["verify"]);
+  return crypto.subtle.verify({ name: "RSA-PSS", saltLength: 32 }, key, b64ToBytes(signatureB64), bytes);
 }
 
 const get = (path) => request(path);
@@ -76,6 +100,8 @@ export const api = {
   updateIncident: (id, changes) => send("PATCH", `/incidents/${id}`, changes),
   setTrust: (id, status, note) => send("PUT", `/devices/${id}/trust`, { status, note: note || null }),
   integrity: () => get("/integrity/verify"),
+  attestation: () => get("/integrity/attestation"),
+  publicKey: () => get("/signing/public-key"),
   graph: (params) => get(`/graph?${new URLSearchParams(params)}`),
   importEvidence: (body) => send("POST", "/evidence/import", body),
   evidenceImports: () => get("/evidence/imports"),

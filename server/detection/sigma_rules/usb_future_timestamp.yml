@@ -1,0 +1,32 @@
+title: USB Event Dated After the Server Received It
+id: 3f6b9a52-8c1e-4d27-9b0e-5a7c2e41d913
+name: future_timestamp
+status: experimental
+description: |
+  The agent dated an event more than five minutes after the server received it. Late events are
+  normal (the agent spools them while the server is unreachable), so only the future is suspicious:
+  the agent machine's clock is wrong, or the report was forged. Either way the timeline around it
+  cannot be trusted. Imported evidence is exempt, as it is dated by the seized machine's own log.
+references:
+  - https://attack.mitre.org/techniques/T1070/006/
+author: TraceForge team (Tanisha Saha, Adithya Ajith, Sharvin Shetty)
+date: 2026-10-30
+tags:
+  - attack.defense-evasion
+  - attack.t1070.006
+logsource:
+  product: traceforge
+  category: usb_event
+detection:
+  selection:
+    event.seconds_ahead_of_server|gt: 300
+    event.imported: false
+  condition: selection
+falsepositives:
+  - An agent machine whose clock is set wrong, with no attacker involved
+level: medium
+risk:  # NIST SP 800-30 Rev. 1 risk assessment (server/scoring/nist.py)
+  likelihood: 40
+  impact: 60
+  rationale: >-
+    Likelihood Moderate (a wrong clock is a more common cause than a forged report). Impact Moderate (the event's place in the timeline is unreliable, but its contents are still recorded and hash-chained).

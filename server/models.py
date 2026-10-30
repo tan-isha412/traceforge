@@ -56,12 +56,16 @@ class Event(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"), index=True)
     machine_id: Mapped[int] = mapped_column(ForeignKey("machines.id"), index=True)
-    event_type: Mapped[str] = mapped_column(String)  # "connect" | "disconnect"
+    event_type: Mapped[str] = mapped_column(String)  # "connect" | "disconnect" | "typing"
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Tamper-evident evidence chain (see server/integrity.py).
     prev_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     record_hash: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    # When the server received the report and who sent it (agent key name, "shared-key", or import).
+    # The agent's own timestamp is kept as the event time: spooled events are legitimately late.
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=utcnow)
+    reported_by: Mapped[str | None] = mapped_column(String, nullable=True)
 
     device: Mapped["Device"] = relationship(back_populates="events")
     machine: Mapped["Machine"] = relationship(back_populates="events")

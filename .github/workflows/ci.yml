@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  server:
+    name: Server and agent tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements-agent.txt  # server + agent extras, so agent code is tested too
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Validate the Sigma rules (format, NIST SP 800-30 ratings, ATT&CK tags)
+        run: python -c "from server.detection import sigma; print(len(sigma.RULES), 'Sigma rules OK')"
+      - name: Detection quality on the synthetic scenarios
+        run: python -m server.evaluate
+
+  dashboard:
+    name: Dashboard build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build

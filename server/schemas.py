@@ -17,12 +17,13 @@ class ORM(BaseModel):
 
 
 class EventIngest(BaseModel):
-    machine_hostname: str
-    vendor_id: str
-    product_id: str
+    machine_hostname: str = Field(min_length=1, max_length=255)
+    vendor_id: str = Field(min_length=1, max_length=16)
+    product_id: str = Field(min_length=1, max_length=16)
     serial_number: str | None = None
     device_type: str | None = None
-    event_type: str  # "connect" | "disconnect" | "typing" (keystroke-timing report for a new keyboard)
+    # "typing" is a keystroke-timing report for a newly connected keyboard (agent/keystrokes.py).
+    event_type: Literal["connect", "disconnect", "typing"]
     timestamp: UTCDatetime | None = None
     descriptor: dict | None = None
     # How the device enumerated: {"interface_order": [class codes in arrival order], "duration_ms": float}

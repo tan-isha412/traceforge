@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -15,8 +15,20 @@ router = APIRouter(tags=["system"])
 
 @router.get("/stats", response_model=StatsOut, dependencies=[Depends(current_user)])
 def stats(db: Session = Depends(get_db)):
+    # A device's CURRENT risk is its latest scored event (as in the device list), not the worst it ever had:
+    # counting any past high score would keep resolved or trusted devices in this tile forever.
+    ranked = (
+        db.query(
+            RiskScore.level.label("level"),
+            func.row_number()
+            .over(partition_by=RiskScore.device_id, order_by=(Event.timestamp.desc(), Event.id.desc()))
+            .label("rank"),
+        )
+        .join(Event, Event.id == RiskScore.event_id)
+        .subquery()
+    )
     high_risk = (
-        db.query(func.count(func.distinct(RiskScore.device_id))).filter(RiskScore.level.in_(["high", "very_high"])).scalar()
+        db.query(func.count()).select_from(ranked).filter(ranked.c.rank == 1, ranked.c.level.in_(["high", "very_high"])).scalar()
     )
     return StatsOut(
         devices=db.query(func.count(Device.id)).scalar(),
@@ -35,7 +47,7 @@ def ml_status():
 
 
 @router.get("/ml/drift", dependencies=[Depends(current_user)])
-def ml_drift(days: float = 14, db: Session = Depends(get_db)):
+def ml_drift(days: float = Query(default=14, gt=0, le=365), db: Session = Depends(get_db)):
     """Model health: drift of recent normal behaviour from the training baseline (PSI per feature)."""
     return drift.check(db, days)
 
@@ -49,3 +61,4 @@ def ml_train(db: Session = Depends(get_db), who: str = Depends(admin_or_api_key)
     audit.record(db, who, "ml.train", rows=status["training_rows"], excluded=status["excluded_rows"], algorithm=status["algorithm"])
     db.commit()
     return status
+

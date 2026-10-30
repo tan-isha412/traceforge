@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from server import audit, auth
+from server import audit, auth, ratelimit
 from server.config import settings
 from server.database import get_db
 from server.models import User
@@ -39,12 +39,20 @@ def config():
 
 
 @router.post("/login", response_model=LoginOut)
-def login(body: LoginIn, db: Session = Depends(get_db)):
+def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
+    keys = (f"user:{body.username.lower()}", f"addr:{request.client.host if request.client else '?'}")
+    wait = ratelimit.retry_after(*keys)
+    if wait is not None:
+        audit.record(db, body.username, "auth.login_throttled")
+        db.commit()
+        raise HTTPException(status_code=429, detail="Too many failed logins. Try again later.", headers={"Retry-After": str(wait)})
     user = auth.authenticate(db, body.username, body.password)
     if user is None:
+        ratelimit.failed(*keys)
         audit.record(db, body.username, "auth.login_failed")
         db.commit()
         raise HTTPException(status_code=401, detail="Wrong username or password.")
+    ratelimit.succeeded(keys[0])
     token, expires = auth.start_session(db, user)
     audit.record(db, user.username, "auth.login")
     db.commit()

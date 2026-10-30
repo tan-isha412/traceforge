@@ -38,7 +38,9 @@ RULES_DIR = Path(__file__).with_name("sigma_rules")
 SIGMA_LEVELS = tuple(nist.SIGMA_LEVEL.values())
 STATUSES = {"stable", "test", "experimental", "deprecated", "unsupported"}
 PRODUCT = "traceforge"
-CATEGORIES = {"connect": "usb_connect", "typing": "usb_typing", "disconnect": "usb_disconnect"}
+# "any" (usb_event) holds rules about the report itself rather than the device, which apply whatever
+# kind of event it is (an event dated in the future); they run in addition to the event's own category.
+CATEGORIES = {"connect": "usb_connect", "typing": "usb_typing", "disconnect": "usb_disconnect", "any": "usb_event"}
 MODIFIERS = {"gt", "gte", "lt", "lte", "contains", "startswith", "endswith", "exists", "fieldref", "all"}
 REQUIRED = ("title", "id", "name", "status", "description", "author", "date", "logsource", "detection", "level", "tags", "risk")
 TECHNIQUE_TAG = re.compile(r"attack\.(t\d{4}(?:\.\d{3})?)")

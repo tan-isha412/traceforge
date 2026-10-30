@@ -14,8 +14,10 @@ Fields:
   device.fingerprint, device.fingerprint_known_for_model, device.first_time_on_machine,
   machine.hostname, machine.same_model_other_serial_24h,
   typing.keys, typing.rate_per_s, typing.median_gap_ms, typing.gap_cv, typing.first_key_after_s,
+  typing.burst_fraction, typing.burst_gaps,
   transfer.bytes_written, transfer.bytes_read, transfer.over_threshold,
-  transfer.unusual_for_device, event.local_hour
+  transfer.unusual_for_device, event.local_hour,
+  event.seconds_ahead_of_server, event.imported (any event type: rules in category usb_event)
 A field is None when it does not apply (for example serial_fits_model when no other unit of the
 model is known), so no rule matches on it.
 """
@@ -247,18 +249,30 @@ TYPING_FIELDS = ("keys", "rate_per_s", "median_gap_ms", "gap_cv", "first_key_aft
 
 
 def check_keystroke_injection(typing: dict | None) -> list[Finding]:
-    """Runs on 'typing' reports, not connects: superhuman, machine-regular typing from a new keyboard."""
+    """Runs on 'typing' reports, not connects: superhuman typing from a newly connected keyboard."""
     typing = typing or {}
     obs = Observations({f"typing.{k}": typing.get(k) for k in TYPING_FIELDS})
+    keys, burst = typing.get("keys") or 0, typing.get("burst_fraction")
+    # Gaps under 20 ms (agent BURST_MS): too fast for a person pressing separate keys.
+    burst_gaps = round(burst * (keys - 1)) if burst is not None and keys > 1 else None
+    obs.fields["typing.burst_gaps"] = burst_gaps
     if "median_gap_ms" in typing:
         rate, median, cv = typing.get("rate_per_s", 0.0), typing["median_gap_ms"], typing.get("gap_cv", 1.0)
+        # Name the signs that are actually present (same thresholds as usb_keystroke_injection.yml).
+        signs = []
+        if rate >= 25:
+            signs.append(f"{rate:g} keys/s sustained")
+        if median < 30 and cv < 0.35:
+            signs.append(f"a median gap of {median:g} ms with almost no variation (gap CV {cv:g})")
+        if burst_gaps is not None and burst_gaps >= 15 and burst >= 0.5:
+            signs.append(f"{burst_gaps} gaps under 20 ms ({burst:.0%} of the typing)")
         started = typing.get("first_key_after_s")
         start = f", starting {started:g} s after it was plugged in" if started is not None else ""
         obs.note(
             "keystroke_injection",
-            f"Typed {typing.get('keys')} keys at {rate:g} keys/s with a median gap of {median:g} ms and almost no variation "
-            f"(gap CV {cv:g}){start}. People type with roughly 80-250 ms between keys: this is a machine typing.",
-            {k: typing.get(k) for k in TYPING_FIELDS},
+            f"Typed {keys} keys with " + (" and ".join(signs) or "machine-like timing") + f"{start}. "
+            "People type with roughly 80-250 ms between keys: this is a machine typing.",
+            {**{k: typing.get(k) for k in TYPING_FIELDS}, "burst_gaps": burst_gaps},
         )
     return findings_for("typing", obs)
 
@@ -305,3 +319,21 @@ def check_large_transfer(db: Session, device: Device, event: Event, transfer: di
     )
     obs.note("large_transfer_off_hours", f"The copy was made outside working hours ({hour:02d}:00 local).", {"local_hour": hour})
     return findings_for("disconnect", obs)
+
+
+# --- any event ------------------------------------------------------------------------------------
+
+FUTURE_TOLERANCE_S = 300  # agent clocks drift a little; usb_future_timestamp.yml flags more than this
+
+
+def check_event_time(event: Event, received_at, imported: bool) -> list[Finding]:
+    """Facts about the report itself, matched by the usb_event rules whatever the event type."""
+    ahead = (as_utc(event.timestamp) - received_at).total_seconds()
+    obs = Observations({"event.seconds_ahead_of_server": round(ahead), "event.imported": imported})
+    obs.note(
+        "future_timestamp",
+        f"The agent dated this event {ahead / 60:.0f} minutes after the server received it. Either the agent "
+        "machine's clock is wrong or the report was forged; the timeline around it is unreliable.",
+        {"ahead_s": round(ahead), "received_at": received_at.isoformat()},
+    )
+    return findings_for("any", obs)

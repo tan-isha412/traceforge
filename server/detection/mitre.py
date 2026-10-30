@@ -12,6 +12,7 @@ TECHNIQUES = {
     "T1091": ("Replication Through Removable Media", "Lateral Movement"),
     "T1059": ("Command and Scripting Interpreter", "Execution"),
     "T1052.001": ("Exfiltration over USB", "Exfiltration"),
+    "T1070.006": ("Indicator Removal: Timestomp", "Defense Evasion"),
 }
 
 # From each Sigma rule's ATT&CK tags (sigma_rules/*.yml), so the rule file is the one source.

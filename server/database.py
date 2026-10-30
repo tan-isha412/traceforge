@@ -20,7 +20,7 @@ def get_db():
 # so databases created by an older version get them added here.
 ADDED_COLUMNS = {
     "incidents": {"case_id": "INTEGER REFERENCES incidents(id)", "case_reason": "VARCHAR", "note": "VARCHAR"},
-    "events": {"prev_hash": "VARCHAR", "record_hash": "VARCHAR"},
+    "events": {"prev_hash": "VARCHAR", "record_hash": "VARCHAR", "received_at": "TIMESTAMP", "reported_by": "VARCHAR"},
     "devices": {"trust_status": "VARCHAR DEFAULT 'auto'", "trust_note": "VARCHAR", "trust_updated_at": "TIMESTAMP"},
 }
 

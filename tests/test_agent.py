@@ -1,3 +1,4 @@
+import base64
 import json
 from types import SimpleNamespace
 
@@ -66,12 +67,12 @@ class FakeSession:
 def test_sender_spools_while_server_is_down_and_delivers_in_order_later(tmp_path):
     spool = tmp_path / "spool.jsonl"
     session = FakeSession()
-    s = Sender("http://srv", "key1", spool, session=session)
+    s = Sender("http://srv", "key1", spool, session=session, hostname="PC-1")
     assert s.send({"n": 1}) == [] and s.send({"n": 2}) == []
-    assert [json.loads(line)["n"] for line in spool.read_text().splitlines()] == [1, 2]
+    assert [s.cipher.open(line)["n"] for line in spool.read_text().splitlines()] == [1, 2]
 
     # A restarted agent picks the spool back up.
-    s2 = Sender("http://srv", "key1", spool, session=session)
+    s2 = Sender("http://srv", "key1", spool, session=session, hostname="PC-1")
     session.up = True
     assert len(s2.flush()) == 2
     assert [p["n"] for p in session.sent] == [1, 2]
@@ -134,3 +135,51 @@ def test_windows_pnp_entities_are_parsed():
                             CompatibleID=["USB\\Class_03&SubClass_01&Prot_01", "USB\\Class_03"])
     i = backends._windows_event(iface, "add")
     assert (i.kind, i.interface_class) == ("interface", 3)
+
+
+# --- spool encryption (agent/spool.py) ---------------------------------------------------------
+
+
+def test_spool_is_encrypted_and_reveals_nothing_on_disk(tmp_path):
+    spool = tmp_path / "spool.jsonl"
+    s = Sender("http://srv", "key1", spool, session=FakeSession(), hostname="PC-1")
+    s.send({"vendor_id": "0781", "serial_number": "SECRET-SERIAL"})
+    text = spool.read_text()
+    assert text.startswith("v1:") and "SECRET-SERIAL" not in text and "0781" not in text
+    a, b = s.cipher.seal({"n": 1}), s.cipher.seal({"n": 1})
+    assert a != b  # random nonce per line: identical events do not produce identical ciphertext
+
+
+def test_tampered_spool_line_is_quarantined_not_sent(tmp_path, capsys):
+    spool = tmp_path / "spool.jsonl"
+    s = Sender("http://srv", "key1", spool, session=FakeSession(), hostname="PC-1")
+    s.send({"n": 1})
+    s.send({"n": 2})
+    lines = spool.read_text().splitlines()
+    raw = bytearray(base64.b64decode(lines[0][3:]))
+    raw[20] ^= 0x01  # flip one bit of the ciphertext
+    lines[0] = "v1:" + base64.b64encode(bytes(raw)).decode()
+    spool.write_text("\n".join(lines) + "\n")
+
+    session = FakeSession()
+    session.up = True
+    s2 = Sender("http://srv", "key1", spool, session=session, hostname="PC-1")
+    assert s2.rejected == 1 and "integrity check" in capsys.readouterr().out
+    s2.flush()
+    assert [p["n"] for p in session.sent] == [2]  # the altered event is never delivered
+    assert len((tmp_path / "spool.jsonl.rejected").read_text().splitlines()) == 1
+
+
+def test_spool_from_another_key_or_machine_does_not_open(tmp_path):
+    spool = tmp_path / "spool.jsonl"
+    Sender("http://srv", "key1", spool, session=FakeSession(), hostname="PC-1").send({"n": 1})
+    assert Sender("http://srv", "other-key", spool, session=FakeSession(), hostname="PC-1").rejected == 1
+    Sender("http://srv", "key1", spool, session=FakeSession(), hostname="PC-1").send({"n": 1})
+    assert Sender("http://srv", "key1", spool, session=FakeSession(), hostname="PC-2").rejected == 1
+
+
+def test_old_plaintext_spool_is_read_and_resealed(tmp_path):
+    spool = tmp_path / "spool.jsonl"
+    spool.write_text('{"n": 1}\n')
+    s = Sender("http://srv", "key1", spool, session=FakeSession(), hostname="PC-1")
+    assert [p["n"] for p in s.queue] == [1] and spool.read_text().startswith("v1:")

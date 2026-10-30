@@ -33,7 +33,7 @@ VALID = {
 
 
 def test_every_rule_is_a_complete_sigma_rule_whose_score_fits_its_level():
-    assert len(sigma.RULES) == 14
+    assert len(sigma.RULES) == 15
     for r in sigma.RULES:
         assert nist.SIGMA_LEVEL[r.risk_level] == r.level, r.name
         lo, hi = nist.SCALE[r.risk_level]
@@ -168,3 +168,29 @@ def test_a_single_high_finding_still_opens_an_incident(client):
     post(client, dtype="USB Mass Storage Device", descriptor=MASS)
     out = post(client, dtype="USB Input Device", descriptor=HID, ts="2026-09-01T10:05:00Z")
     assert out["risk_level"] in ("high", "very_high") and out["incident_id"] is not None
+
+
+# --- training on real data ------------------------------------------------------------------------
+
+
+def test_train_command_saves_the_model_where_it_is_told(client, tmp_path, monkeypatch, capsys):
+    from server import manage
+    from server.detection import ml_model
+
+    for day in range(1, 32):
+        post(client, ts=f"2026-08-{day:02d}T10:00:00Z")  # one routine connection a day
+    target = tmp_path / "real.joblib"
+    monkeypatch.setattr(ml_model, "MODEL_PATH", target)
+    manage.run_train()
+    out = capsys.readouterr().out
+    assert target.exists() and "Trained iforest on 31 connection(s)" in out and str(target) in out
+
+
+def test_train_command_says_when_there_is_not_enough_history(client, tmp_path, monkeypatch):
+    from server import manage
+    from server.detection import ml_model
+
+    post(client)
+    monkeypatch.setattr(ml_model, "MODEL_PATH", tmp_path / "real.joblib")
+    with pytest.raises(SystemExit, match="at least 30"):
+        manage.run_train()

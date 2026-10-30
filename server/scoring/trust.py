@@ -47,11 +47,13 @@ def compute_trust(db: Session, device: Device) -> Trust:
     scored = (
         db.query(Event.timestamp, RiskScore.score, Event.event_type)
         .join(RiskScore, RiskScore.event_id == Event.id)
-        .filter(Event.device_id == device.id, Event.event_type != "disconnect")
+        .filter(Event.device_id == device.id)
         .all()
     )
     connects = [(t, s) for t, s, kind in scored if kind == "connect"]
-    recent_pool = [(t, s) for t, s, _ in scored]  # a typing report's risk counts against trust too
+    # Typing reports and disconnects count too: exfiltration is only found at disconnect, and a follow-up
+    # event carries its attachment's peak risk (server/scoring/risk.py), so taking the max never double-counts.
+    recent_pool = [(t, s) for t, s, _ in scored]
     factors = [{"factor": "baseline", "weight": BASE_TRUST, "explanation": "Starting trust for any device."}]
     if connects:
         clean = sum(1 for _, s in connects if risk_level(s) in ("very_low", "low"))  # NIST Low or below counts as clean

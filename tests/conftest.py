@@ -6,12 +6,17 @@ _tmp = Path(tempfile.mkdtemp(prefix="traceforge-tests-"))
 os.environ["DATABASE_URL"] = f"sqlite:///{(_tmp / 'test.db').as_posix()}"
 # Environment variables win over .env, so a developer's local API key does not leak into the tests.
 os.environ["API_KEY"] = ""
+os.environ["AGENT_KEYS"] = ""
+# Signing key in the temp dir, never in the repo's model_artifacts.
+os.environ["SIGNING_KEY_PATH"] = str(_tmp / "signing_key.pem")
+os.environ["SIGNING_KEY_PASSPHRASE"] = ""
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from server.database import Base, engine  # noqa: E402
 from server.detection import ml_model  # noqa: E402
+from server import ratelimit  # noqa: E402
 from server.main import app  # noqa: E402
 
 
@@ -22,6 +27,7 @@ def client():
     ml_model._bundle = None
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    ratelimit.reset()  # failed-login counters are per process; each test starts clean
     with TestClient(app) as c:
         yield c
 

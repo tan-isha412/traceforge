@@ -11,13 +11,16 @@ Backends:
 Other systems, or a backend that cannot open the device, report nothing; the rest of the agent is unaffected.
 """
 
+import os
 import re
 import statistics
 import sys
 import threading
 import time
 
-WATCH_SECONDS = 30.0
+# How long after plug-in to watch. Injection payloads usually start within seconds, but a script can
+# DELAY past any fixed window: raise TRACEFORGE_TYPING_WATCH_S to watch longer (it only costs a thread).
+WATCH_SECONDS = float(os.environ.get("TRACEFORGE_TYPING_WATCH_S", "30"))
 MAX_KEYS = 2000
 BURST_MS = 20.0  # a gap under this is faster than a person can type
 
@@ -47,6 +50,35 @@ def summarize(key_times: list[float], connected_at: float, watched_s: float) -> 
 # ---------------------------------------------------------------- Linux (evdev)
 
 
+def unavailable_reason() -> str | None:
+    """Why keystroke timing cannot work on this machine, or None if it can. Shown at agent startup
+    so a missing dependency is never mistaken for "no injection seen"."""
+    if sys.platform.startswith("linux"):
+        try:
+            import evdev  # noqa: F401
+        except ImportError:
+            return "python-evdev is not installed (pip install -r requirements-agent.txt)"
+        if not os.access("/dev/input", os.R_OK) or not any(os.access(p, os.R_OK) for p in _input_nodes()):
+            return "no permission to read /dev/input (add this user to the 'input' group, or run as root)"
+        return None
+    if sys.platform == "win32":
+        return None
+    return f"not supported on {sys.platform}"
+
+
+def _input_nodes() -> list[str]:
+    try:
+        return [os.path.join("/dev/input", n) for n in os.listdir("/dev/input") if n.startswith("event")]
+    except OSError:
+        return []
+
+
+def _is_keyboard(evdev, d) -> bool:
+    """A device that can type letters. Mice also report EV_KEY (their buttons), so EV_KEY alone is not enough."""
+    keys = d.capabilities().get(evdev.ecodes.EV_KEY, [])
+    return evdev.ecodes.KEY_A in keys and evdev.ecodes.KEY_ENTER in keys
+
+
 def _watch_linux(vendor_id: str, product_id: str, seconds: float) -> list[float] | None:
     try:
         import evdev
@@ -54,25 +86,33 @@ def _watch_linux(vendor_id: str, product_id: str, seconds: float) -> list[float]
     except ImportError:
         return None
     vid, pid = int(vendor_id, 16), int(product_id, 16)
+    deadline = time.monotonic() + seconds
+    # The watch starts as soon as the HID interface appears, which can be before the kernel has
+    # created its /dev/input node: keep looking for a few seconds instead of giving up at once.
     devices = []
-    for path in evdev.list_devices():
-        try:
-            d = evdev.InputDevice(path)
-        except OSError:
-            continue
-        if d.info.vendor == vid and d.info.product == pid and evdev.ecodes.EV_KEY in d.capabilities():
-            devices.append(d)
+    find_until = min(deadline, time.monotonic() + 5)
+    while not devices and time.monotonic() < find_until:
+        for path in evdev.list_devices():
+            try:
+                d = evdev.InputDevice(path)
+            except OSError:
+                continue
+            if d.info.vendor == vid and d.info.product == pid and _is_keyboard(evdev, d):
+                devices.append(d)
+        if not devices:
+            time.sleep(0.1)
     if not devices:
         return None
     times: list[float] = []
-    deadline = time.monotonic() + seconds
     offset = time.monotonic() - time.time()  # evdev stamps are wall-clock; convert to monotonic
     try:
         while time.monotonic() < deadline and len(times) < MAX_KEYS:
             ready, _, _ = select(devices, [], [], max(deadline - time.monotonic(), 0))
             for d in ready:
                 for ev in d.read():
-                    if ev.type == evdev.ecodes.EV_KEY and ev.value == 1:  # key down; ev.code (which key) is ignored
+                    # Key down on a keyboard key; BTN_* codes (mouse buttons) start at BTN_MISC.
+                    # ev.code tells which key it was and is deliberately not kept.
+                    if ev.type == evdev.ecodes.EV_KEY and ev.value == 1 and ev.code < evdev.ecodes.BTN_MISC:
                         times.append(ev.timestamp() + offset)
     except OSError:  # unplugged mid-watch
         pass

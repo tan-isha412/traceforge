@@ -8,7 +8,8 @@ and retried.
 
     python agent/agent.py
 
-Environment: TRACEFORGE_SERVER (default http://localhost:8000),
+Environment: TRACEFORGE_SERVER (default http://localhost:8000; https://... when the server has TLS),
+TRACEFORGE_CA_BUNDLE (the TraceForge ca.crt, to trust the server's HTTPS certificate),
 TRACEFORGE_API_KEY (must match the server's API_KEY when one is set),
 TRACEFORGE_SPOOL (default ~/.traceforge/spool.jsonl).
 """
@@ -30,6 +31,7 @@ from agent.descriptors import device_type_for, read_descriptor  # noqa: E402
 
 SERVER_URL = os.environ.get("TRACEFORGE_SERVER", "http://localhost:8000")
 API_KEY = os.environ.get("TRACEFORGE_API_KEY") or None
+CA_BUNDLE = os.environ.get("TRACEFORGE_CA_BUNDLE") or None
 SPOOL = Path(os.environ.get("TRACEFORGE_SPOOL", Path.home() / ".traceforge" / "spool.jsonl"))
 RETRY_SECONDS = 10
 HOSTNAME = socket.gethostname()
@@ -37,7 +39,9 @@ HOSTNAME = socket.gethostname()
 WATCH_TYPING = os.environ.get("TRACEFORGE_WATCH_TYPING", "1") != "0"
 
 
-SAMPLE_SECONDS = 5  # how often attached storage devices' I/O counters are read
+# How often attached storage devices' I/O counters are read. The counters vanish at unplug, so
+# whatever is written after the last sample is not counted: a shorter interval loses less.
+SAMPLE_SECONDS = float(os.environ.get("TRACEFORGE_SAMPLE_S", "2"))
 
 
 def is_storage(dev, descriptor: dict | None) -> bool:
@@ -53,6 +57,14 @@ def has_keyboard(dev, descriptor: dict | None) -> bool:
     return "input" in (dev.device_type or "").lower() or "keyboard" in (dev.device_type or "").lower()
 
 
+def plaintext_risk(server_url: str) -> bool:
+    """Plain HTTP to anything but this machine exposes the key and the events on the network."""
+    from urllib.parse import urlparse
+
+    url = urlparse(server_url)
+    return url.scheme == "http" and (url.hostname or "") not in ("localhost", "127.0.0.1", "::1")
+
+
 def report(results: list[dict], label: str) -> None:
     for r in results:
         flag = " [NEW DEVICE]" if r.get("is_new_device") else ""
@@ -65,13 +77,37 @@ def run() -> None:
     mode, existing = backends.start(events)
     attached = {e.key: e for e in existing}
     tracker = EnumerationTracker()
-    sender = Sender(SERVER_URL, API_KEY, SPOOL)
+    sender = Sender(SERVER_URL, API_KEY, SPOOL, ca_bundle=CA_BUNDLE, hostname=HOSTNAME)
     print(f"TraceForge agent on {HOSTNAME} ({mode}), {len(attached)} USB device(s) attached, "
           f"{len(sender.queue)} spooled event(s). Ctrl+C to stop.")
+    if not sender.cipher.encrypting:
+        print("Note: no TRACEFORGE_API_KEY, so events spooled while the server is down are stored unencrypted.")
+    if plaintext_risk(SERVER_URL):
+        print("WARNING: sending events and the API key over plain HTTP to another machine; anyone on the network can read "
+              "and replay them. Enable TLS on the server (python -m server.manage tls-init) and use https://.")
+    if WATCH_TYPING and (why := keystrokes.unavailable_reason()):
+        print(f"WARNING: keystroke-injection (BadUSB) detection is OFF on this machine: {why}.")
     last_retry = time.monotonic()
     typing_reports: queue.Queue[dict] = queue.Queue()  # filled by watch threads, sent from this loop
     meters: dict[str, TransferMeter] = {}  # storage devices attached now -> bytes moved since they connected
     last_sample = time.monotonic()
+    watching: set[str] = set()  # devices whose keystroke timing is being watched this attachment
+
+    def start_typing_watch(dev) -> None:
+        """Watch from the moment the device appeared (dev.t), not from when its connect was sent:
+        an injector starts typing within a second or two, while the settle window, descriptor read
+        and network send take longer than that."""
+        if not WATCH_TYPING or dev.key in watching:
+            return
+        watching.add(dev.key)
+        keystrokes.watch_in_background(
+            dev.vendor_id,
+            dev.product_id,
+            dev.t,
+            lambda summary, dev=dev: typing_reports.put(build_payload(HOSTNAME, dev, "typing", None, None) | {
+                "typing": summary, "timestamp": datetime.now(timezone.utc).isoformat(),
+            }),
+        )
 
     while True:
         try:
@@ -82,9 +118,14 @@ def run() -> None:
         if ev is not None:
             if ev.kind == "interface":
                 tracker.interface_added(ev)
+                if ev.interface_class == 3:  # HID: may be a keyboard; the watcher checks before counting
+                    pending = tracker._find(ev)
+                    if pending is not None:
+                        start_typing_watch(pending.event)
             elif ev.action == "add":
                 tracker.device_added(ev)
             elif ev.action == "remove":
+                watching.discard(ev.key)
                 known = attached.pop(ev.key, None)
                 if not tracker.device_removed(ev.key) and known is not None:
                     known.wall = ev.wall
@@ -105,15 +146,8 @@ def run() -> None:
             report(sender.send(build_payload(HOSTNAME, dev, "connect", descriptor, enumeration)), label)
             if is_storage(dev, descriptor):
                 meters[dev.key] = TransferMeter(dev.serial_number, dev.extra.get("sys_path"))
-            if WATCH_TYPING and has_keyboard(dev, descriptor):
-                keystrokes.watch_in_background(
-                    dev.vendor_id,
-                    dev.product_id,
-                    time.monotonic(),
-                    lambda summary, dev=dev: typing_reports.put(build_payload(HOSTNAME, dev, "typing", None, None) | {
-                        "typing": summary, "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }),
-                )
+            if has_keyboard(dev, descriptor):
+                start_typing_watch(dev)  # no-op if it already started when the HID interface appeared
 
         if meters and time.monotonic() - last_sample > SAMPLE_SECONDS:
             last_sample = time.monotonic()

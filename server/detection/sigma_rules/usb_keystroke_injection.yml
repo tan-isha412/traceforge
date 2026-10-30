@@ -5,8 +5,10 @@ status: test
 description: |
   A newly connected keyboard types faster and more regularly than any person: 15 or more keys at
   25+ keys per second, or with a median gap under 30 ms and almost no variation (gap coefficient
-  of variation under 0.35). People type with roughly 80-250 ms between keys. Only key timing is
-  recorded, never which keys.
+  of variation under 0.35), or in bursts of at least 15 gaps under 20 ms making up half the typing.
+  The burst test catches injection scripts that pause between bursts (Ducky DELAY), which drags
+  the overall rate down and the variation up so the first two tests miss them. People type with
+  roughly 80-250 ms between keys. Only key timing is recorded, never which keys.
 references:
   - https://attack.mitre.org/techniques/T1200/
   - https://attack.mitre.org/techniques/T1059/
@@ -29,7 +31,10 @@ detection:
   regular:
     typing.median_gap_ms|lt: 30
     typing.gap_cv|lt: 0.35
-  condition: volume and (fast or regular)
+  burst:
+    typing.burst_gaps|gte: 15
+    typing.burst_fraction|gte: 0.5
+  condition: volume and (fast or regular or burst)
 falsepositives:
   - Barcode scanners and hardware password managers, which also type at machine speed
 level: critical

@@ -1,0 +1,6 @@
+# Extra packages for the live agent on Linux (pip install -r requirements-agent.txt).
+# Kept out of requirements.txt because evdev compiles a C extension against the kernel's input
+# headers, which the server's slim Docker image does not have; the server never uses it.
+# Without it the agent runs normally and simply skips the keystroke-timing watch.
+-r requirements.txt
+evdev>=1.6; sys_platform == "linux"  # keystroke-timing watch for new keyboards

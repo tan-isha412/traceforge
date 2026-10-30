@@ -8,10 +8,12 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: traceforge
-      POSTGRES_PASSWORD: traceforge
+      # Set POSTGRES_PASSWORD in .env for anything beyond a demo.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-traceforge}
       POSTGRES_DB: traceforge
     ports:
-      - "5432:5432"
+      # Only this machine can reach the database; the server talks to it over the compose network.
+      - "127.0.0.1:5432:5432"
     volumes:
       - traceforge_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -27,16 +29,20 @@ services:
     container_name: traceforge-server
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+psycopg2://traceforge:traceforge@db:5432/traceforge
+      DATABASE_URL: postgresql+psycopg2://traceforge:${POSTGRES_PASSWORD:-traceforge}@db:5432/traceforge
       # Agents must send this as X-API-Key. Override it in .env (API_KEY=...) for anything beyond a demo.
       API_KEY: ${API_KEY:-change-me}
       API_KEY_HASH: ${API_KEY_HASH:-}
+      AGENT_KEYS: ${AGENT_KEYS:-}
+      REQUIRE_AGENT_KEYS: ${REQUIRE_AGENT_KEYS:-false}
       AUTH_ENABLED: ${AUTH_ENABLED:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       ML_ALGORITHM: ${ML_ALGORITHM:-iforest}
       RETRAIN_INTERVAL_HOURS: ${RETRAIN_INTERVAL_HOURS:-0}
       TIMEZONE: ${TIMEZONE:-Asia/Kolkata}
       EXFIL_THRESHOLD_MB: ${EXFIL_THRESHOLD_MB:-500}
+      # The signing key is created in the traceforge_models volume on first start; set a passphrase to store it encrypted.
+      SIGNING_KEY_PASSPHRASE: ${SIGNING_KEY_PASSPHRASE:-}
     ports:
       - "8000:8000"
     volumes:

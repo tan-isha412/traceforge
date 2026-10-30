@@ -22,7 +22,8 @@ from server.detection.rules import Finding
 from server.scoring import nist
 from server.models import Event
 
-MODEL_PATH = Path(__file__).resolve().parent.parent / "model_artifacts" / "iforest.joblib"
+DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent / "model_artifacts" / "iforest.joblib"
+MODEL_PATH = Path(settings.model_path) if settings.model_path else DEFAULT_MODEL_PATH
 MIN_TRAINING_ROWS = 30
 # Events scoring below this percentile of the training scores count as outliers,
 # so roughly 3% of normal behaviour is flagged rather than whatever the default offset gives.

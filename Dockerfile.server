@@ -9,4 +9,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server ./server
 
 EXPOSE 8000
-CMD ["uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Serves HTTPS when TLS_CERT_FILE and TLS_KEY_FILE are set (see docker-compose.tls.yml), plain HTTP otherwise.
+CMD ["python", "-m", "server.run"]
